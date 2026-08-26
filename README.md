@@ -5,9 +5,9 @@
 
 ## Status / 状态
 
-Source code is now public on GitHub. NPM beta packages are **not published yet**; the installation commands below will apply after the beta release.
+Source code is public on GitHub and the package is available on NPM. The current and only published release is `0.1.0-beta.1`; it is also the registry's default `latest` release, so users can install it without writing a tag.
 
-源码现已公开到 GitHub。NPM Beta 包**尚未发布**；下方安装命令会在 Beta 发布后适用。
+源码已公开到 GitHub，插件包也已发布到 NPM。当前唯一的已发布版本是 `0.1.0-beta.1`；它同时是 registry 的默认 `latest` 版本，因此用户安装时无需额外写 tag。
 
 This is an unofficial community plugin for DeepSeek Harness. It extends Harness through its public plugin/profile interfaces, without patching Harness core source code.
 
@@ -173,10 +173,12 @@ Users install one plugin entry; they do not need to manually wire the two packag
 
 ## Installation / 安装
 
-> Available after the NPM beta release / 将在 NPM Beta 发布后可用
+Install the current public release through the default registry tag:
+
+通过默认 registry tag 安装当前公开版本：
 
 ```bash
-dsh plugin --profile web add dsh-context-compression-selector@beta
+dsh plugin --profile web add dsh-context-compression-selector
 dsh --profile web --dump-config
 ```
 
@@ -272,6 +274,6 @@ MIT。详见 [LICENSE](./LICENSE)。
 
 ---
 
-**Draft note / 草稿说明：** This bilingual README is a review draft. It deliberately does not claim that NPM packages are already available, and it does not replace the public repository README until approved.
+**Release note / 发布说明：** The current default release is `0.1.0-beta.1`. Future updates will use new immutable NPM version numbers; published versions are never overwritten.
 
-**草稿说明：** 本中英 README 仅供审阅。它明确不声称 NPM 包已经可用，也不会在获批前替换公开仓库 README。
+**发布说明：** 当前默认版本为 `0.1.0-beta.1`。之后的更新会使用新的、不可变的 NPM 版本号；已发布版本不会被覆盖。
