@@ -1,0 +1,8 @@
+# Standalone Profile Bundle entry. The same package may already be present in a
+# Harness distribution; its Host implementation reference-counts the preset
+# decoration so the two rows never install two compression stacks.
+- insert:
+    - id: context-compression-selector-bundle
+      name: 'dsh-context-compression-selector'
+      config:
+        presetOverlay: true

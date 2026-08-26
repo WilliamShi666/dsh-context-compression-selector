@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+
+linkWorkspacePackages: true
+
+peerDependencyRules:
+  allowedVersions:
+    typescript: ">=5 <7"
+
+allowBuilds:
+  esbuild: true
+  "@huggingface/tokenizers": true

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/runtime" },
+    { "path": "./packages/selector" }
+  ]
+}

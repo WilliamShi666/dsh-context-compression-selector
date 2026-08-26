@@ -1,0 +1,23 @@
+{
+  "repository": "deepseek-ai/DeepSeek-V4-Pro",
+  "revision": "0e1a0e5e52aea73055f50fef6f2423db370265b6",
+  "license": "MIT",
+  "modelIds": [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro"
+  ],
+  "files": {
+    "tokenizer.json": {
+      "bytes": 6367146,
+      "sha256": "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf"
+    },
+    "tokenizer_config.json": {
+      "bytes": 801,
+      "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
+    },
+    "LICENSE.DeepSeek-V4-Pro.txt": {
+      "bytes": 1064,
+      "sha256": "1c8f573e830ca9b3ebfeb7ace1823146e22b66f99ee223840e7637c9e745e1c7"
+    }
+  }
+}

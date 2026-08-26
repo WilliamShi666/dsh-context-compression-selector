@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false
+  },
+  "include": [
+    "packages/runtime/src/**/*.ts",
+    "packages/runtime/tests/**/*.ts",
+    "packages/selector/src/**/*.ts",
+    "packages/selector/src/**/*.tsx",
+    "packages/selector/tests/**/*.ts",
+    "packages/selector/tests/**/*.tsx",
+    "vitest.config.ts",
+    "vitest.built.config.ts"
+  ]
+}
