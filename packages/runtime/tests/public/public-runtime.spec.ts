@@ -134,13 +134,14 @@ function appendToolTurn(
   text: string,
   closeTurn: boolean,
   userText?: string,
+  provider = 'deepseek',
 ): { readonly assistantSeq: number; readonly resultSeq: number } {
   const callId = CallId(`call-${String(turn)}`)
   session.append('turn/start', { turn })
   if (session.requestHeader() === undefined) {
     session.append('request/header', {
       reason: 'initial',
-      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+      header: canonicalHeader({ config: { provider, model: MODEL } }),
     })
   }
   if (userText !== undefined) {
@@ -320,7 +321,7 @@ describe('standalone runtime on published Harness APIs', () => {
       historyTriggerTokens: 100_000,
     }).await()
     const session = Session.create(SessionId('public-fresh-e2e'))
-    appendToolTurn(session, 1, 'fresh evidence '.repeat(1_000), false)
+    appendToolTurn(session, 1, 'fresh evidence '.repeat(1_000), false, undefined, 'deepseek-official')
 
     const result = ctx.toolResultPruner.pruneSession(session, {
       stage: 'fresh',
@@ -354,7 +355,7 @@ describe('standalone runtime on published Harness APIs', () => {
       historyTriggerTokens: 100_000,
     }).await()
     const session = Session.create(SessionId('public-aggregate-e2e'))
-    appendToolTurn(session, 1, 'aggregate evidence '.repeat(1_000), false)
+    appendToolTurn(session, 1, 'aggregate evidence '.repeat(1_000), false, undefined, 'deepseek-official')
 
     const result = ctx.toolResultPruner.pruneSession(session, {
       stage: 'fresh',

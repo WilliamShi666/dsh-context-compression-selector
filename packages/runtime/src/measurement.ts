@@ -109,7 +109,7 @@ function bindCounter(provider: string | undefined, model: string | undefined): C
   if (provider === undefined || model === undefined) {
     return () => unavailableTokenCount('canonical text: no durable provider/model request header')
   }
-  if (provider !== 'deepseek') {
+  if (provider !== 'deepseek' && provider !== 'deepseek-official') {
     return () => unavailableTokenCount(`canonical text: provider "${provider}" is not the supported DeepSeek route`)
   }
   const tokenizer = deepSeekV4TokenizerForModel(model)
