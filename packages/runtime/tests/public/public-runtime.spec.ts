@@ -281,6 +281,21 @@ describe('standalone runtime on published Harness APIs', () => {
     expect(policy.historyKeepRecentTokens).toBe(64_000)
   })
 
+  it.each([
+    'balanced',
+    'cache-strict',
+    'savings',
+    'adaptive',
+    'custom',
+  ] as const)('disables native head/middle/tail pruning for %s', (profile) => {
+    expect(resolvePolicy(resolveConfig(), profile).nativeToolResultEnabled).toBe(false)
+  })
+
+  it('enables native head/middle/tail pruning only for the Native profile', () => {
+    expect(resolvePolicy(resolveConfig(), 'native').nativeToolResultEnabled).toBe(true)
+    expect(resolvePolicy(resolveConfig(), 'off').nativeToolResultEnabled).toBe(false)
+  })
+
   it('lands a standard compaction/prune plus tool-result replacement without custom events', async () => {
     const ctx = await runtimeContext()
     const audit = captureAudit(ctx)

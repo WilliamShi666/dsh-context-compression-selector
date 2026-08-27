@@ -115,7 +115,7 @@ In this project, a **compression profile** is not a Harness preset. It is the se
 | Cache Strict | enabled, same Fresh/Aggregate values as Balanced | capacity-pressure only at `600000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Favors cache-prefix stability; delays history aging until real pressure. |
 | Savings | enabled, `4096 → 1536` / `16384 → 4096` | routine at `400000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Earlier and stronger reduction for lower context cost. |
 | Adaptive | enabled, same Fresh/Aggregate values as Balanced | adaptive at `500000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `96000` | disabled | Uses the existing adaptive policy model; it is not a claim of exact future price optimization. |
-| Custom | individually configurable | individually configurable | configurable native fallback | Custom-only, off by default | Full user control; the current default is shown below. |
+| Custom | individually configurable | individually configurable | disabled | Custom-only, off by default | Full user control; the current default is shown below. |
 
 | 压缩 Profile | Fresh / Aggregate | History 行为 | 原生“头-中-尾”工具结果裁剪 | TailTrim | 核心取舍 |
 | --- | --- | --- | --- | --- | --- |
@@ -125,7 +125,7 @@ In this project, a **compression profile** is not a Harness preset. It is the se
 | Cache Strict | 启用，Fresh/Aggregate 与 Balanced 相同 | 仅容量压力下于 `600000` 触发；保留 10 次调用 + `64000` 工具结果 token；至少回收 `128000` | 关闭 | 优先维持缓存前缀稳定；只有真实压力时才老化历史。 |
 | Savings | 启用，`4096 → 1536` / `16384 → 4096` | 在 `400000` 日常触发；保留 10 次调用 + `64000` 工具结果 token；至少回收 `128000` | 关闭 | 更早、更强地收缩，降低上下文成本。 |
 | Adaptive | 启用，Fresh/Aggregate 与 Balanced 相同 | `500000` 下的 adaptive；保留 10 次调用 + `64000` 工具结果 token；至少回收 `96000` | 关闭 | 使用现有 adaptive 策略模型；不声称能精确预测未来价格最优解。 |
-| Custom | 可逐项配置 | 可逐项配置 | 可配置 native fallback | 仅 Custom 可用，默认关闭 | 完全由用户控制；当前默认值见下表。 |
+| Custom | 可逐项配置 | 可逐项配置 | 关闭 | 仅 Custom 可用，默认关闭 | 完全由用户控制；当前默认值见下表。 |
 
 `native` is a tool-result profile, while **native auto-compact** is a separate Harness/model mechanism. These names are similar but must not be conflated: selecting the Native profile does not claim to tune the model-driven native auto-compact strategy.
 

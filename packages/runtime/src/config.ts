@@ -181,7 +181,7 @@ export function resolvePolicy(
   if (profile === 'custom') return resolveCustomPolicy(custom, options)
   const presets: Record<Exclude<CompressionProfile, 'custom'>, Omit<CompressionPolicy, 'profile'>> = {
     off: {
-      freshEnabled: false, aggregateEnabled: false, historyMode: 'disabled',
+      nativeToolResultEnabled: false, freshEnabled: false, aggregateEnabled: false, historyMode: 'disabled',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: Number.MAX_SAFE_INTEGER, freshTargetTokens: Number.MAX_SAFE_INTEGER,
       aggregateTriggerTokens: Number.MAX_SAFE_INTEGER, aggregateTargetTokens: Number.MAX_SAFE_INTEGER,
@@ -189,7 +189,7 @@ export function resolvePolicy(
       historyKeepRecentTokens: 64_000, historyMinReclaimTokens: Number.MAX_SAFE_INTEGER,
     },
     native: {
-      freshEnabled: false, aggregateEnabled: false, historyMode: 'disabled',
+      nativeToolResultEnabled: true, freshEnabled: false, aggregateEnabled: false, historyMode: 'disabled',
       nativeTriggerTokens: 4_096, nativeTargetTokens: 2_048,
       freshTriggerTokens: Number.MAX_SAFE_INTEGER, freshTargetTokens: Number.MAX_SAFE_INTEGER,
       aggregateTriggerTokens: Number.MAX_SAFE_INTEGER, aggregateTargetTokens: Number.MAX_SAFE_INTEGER,
@@ -197,7 +197,7 @@ export function resolvePolicy(
       historyKeepRecentTokens: 64_000, historyMinReclaimTokens: Number.MAX_SAFE_INTEGER,
     },
     balanced: {
-      freshEnabled: true, aggregateEnabled: true, historyMode: 'routine',
+      nativeToolResultEnabled: false, freshEnabled: true, aggregateEnabled: true, historyMode: 'routine',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 8_192, freshTargetTokens: 3_072,
       aggregateTriggerTokens: 32_768, aggregateTargetTokens: 12_288,
@@ -205,7 +205,7 @@ export function resolvePolicy(
       historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 96_000,
     },
     'cache-strict': {
-      freshEnabled: true, aggregateEnabled: true, historyMode: 'capacity-pressure',
+      nativeToolResultEnabled: false, freshEnabled: true, aggregateEnabled: true, historyMode: 'capacity-pressure',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 8_192, freshTargetTokens: 3_072,
       aggregateTriggerTokens: 32_768, aggregateTargetTokens: 12_288,
@@ -213,7 +213,7 @@ export function resolvePolicy(
       historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 128_000,
     },
     savings: {
-      freshEnabled: true, aggregateEnabled: true, historyMode: 'routine',
+      nativeToolResultEnabled: false, freshEnabled: true, aggregateEnabled: true, historyMode: 'routine',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 4_096, freshTargetTokens: 1_536,
       aggregateTriggerTokens: 16_384, aggregateTargetTokens: 4_096,
@@ -221,7 +221,7 @@ export function resolvePolicy(
       historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 128_000,
     },
     adaptive: {
-      freshEnabled: true, aggregateEnabled: true, historyMode: 'adaptive',
+      nativeToolResultEnabled: false, freshEnabled: true, aggregateEnabled: true, historyMode: 'adaptive',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 8_192, freshTargetTokens: 3_072,
       aggregateTriggerTokens: 32_768, aggregateTargetTokens: 12_288,

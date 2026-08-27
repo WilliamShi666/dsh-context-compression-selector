@@ -128,6 +128,7 @@ export function resolveCustomPolicy(
   }
   const resolved: CompressionPolicy = {
     profile: 'custom',
+    nativeToolResultEnabled: false,
     freshEnabled: policy.fresh.enabled,
     aggregateEnabled: policy.aggregate.enabled,
     historyMode: !policy.history.enabled

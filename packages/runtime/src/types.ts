@@ -124,6 +124,8 @@ export interface ToolResultPruneConfig {
 /** Resolved per-profile behavior. */
 export interface CompressionPolicy {
   readonly profile: CompressionProfile
+  /** Whether this Session may use the selector's native-style head/middle/tail reducer. */
+  readonly nativeToolResultEnabled: boolean
   readonly freshEnabled: boolean
   readonly aggregateEnabled: boolean
   readonly historyMode: HistoryMode

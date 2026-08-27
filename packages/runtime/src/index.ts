@@ -328,7 +328,7 @@ export class ToolResultPruner extends Service {
     if (profile === 'off') return emptyResult()
 
     const landed: PrunedEntry[] = []
-    if (profile === 'native') {
+    if (policy.nativeToolResultEnabled) {
       const candidates = this.snapshot(session, view)
       const eligible = candidates.filter(candidate => candidate.call.name !== 'context_compression_retrieve')
       const exactUnavailable = eligible.some(candidate => candidate.count.kind !== 'exact-tokenizer')
