@@ -11,8 +11,8 @@
 
 长期运行的 Agent 任务会积累大量工具输出。本社区插件在不修改 DeepSeek Harness 核心的前提下，为这些工具结果提供可选择、可审计的上下文压缩策略。
 
-- **Fresh**：压缩刚变得过大的工具结果片段。
-- **Aggregate**：对已经压缩、但又重新增长的内容再次压缩。
+- **Fresh**：在模型第一次接收前，对刚变得过大的工具结果片段进行预压缩。
+- **Aggregate**：若新鲜内容仍超过已配置预算，则再次进行预压缩。
 - **History / micro-compact**：在保留近期工作上下文的前提下，替换符合条件的旧工具结果。
 - **TailTrim**：仅 Custom 可启用的、可选的尾部裁剪路径。
 - **Native**：将 Harness 风格的“保留头尾、裁掉中间”的工具结果裁剪保留为一个明确 Profile。
@@ -45,6 +45,12 @@
 
 “安全降级”表示原始工具结果会保留在上下文中，并产生可审计的跳过或失败记录。特别是 Flash 视觉模型虽然有价格目录条目，但没有经过验证的 bundled tokenizer 映射，因此不能被当作文本 Flash 的别名。选择器不会使用字符数估算 token，也不能被当成通用、多提供商的压缩器。
 
+## 预压缩与历史压缩并不相同
+
+**Fresh 和 Aggregate 是预压缩，不是 History 压缩。**它们会在新工具结果第一次交给模型之前执行。reducer 会根据工具名、命令参数和内容证据选择安全策略，例如 JSON、搜索、文件读取、Git、包管理、构建、测试或 Shell 输出。它们只限制新增加的内容，不会改写已经发给提供商的序列化 prompt 前缀，因此不会破坏已有的 Prompt Cache。
+
+**History / micro-compact 是历史压缩。**它会选择保护工作集之外的旧工具结果，并在活动上下文中将每一条选中的结果替换为短小、可恢复的多行占位记录；该记录以 `[Old tool result content cleared from active context]` 开始，并保留工具名、状态、来源引用和检索指令，原始的持久化事件仍可恢复。它有意改写已经发送过的前缀，因此会破坏或重新开始 Prompt Cache。History 在处理旧结果前，会保护“最近 10 次 Agent 工具调用”和“最近 64,000 个工具结果 token”的并集。
+
 ## Profile 如何评估
 
 ```mermaid
@@ -72,6 +78,8 @@ flowchart TD
 
 ## Profile 一览
 
+Profile 是编排策略，不是彼此独立的压缩算法。一个 Profile 会组合这些已有方法，决定启用哪些方法、评估顺序、阈值、保留工作集、最低回收量以及缓存安全方面的取舍。
+
 | Profile | Fresh / Aggregate | History | 原生工具裁剪 | TailTrim |
 | --- | --- | --- | --- | --- |
 | Off | 关闭 | 关闭 | 关闭 | 关闭 |
@@ -79,10 +87,16 @@ flowchart TD
 | Balanced | `8192 → 3072` / `32768 → 12288` | `500000` 常规触发；保护最近 10 次调用和 64,000 token 尾窗 | 关闭 | 关闭 |
 | Cache Strict | 与 Balanced 相同 | 工具结果超过 `600000` token 且路由上下文利用率至少 70% 时触发 | 关闭 | 关闭 |
 | Savings | `4096 → 1536` / `16384 → 4096` | `400000` 常规触发 | 关闭 | 关闭 |
-| Adaptive | 与 Balanced 相同 | `500000` 下 adaptive；容量压力可作为安全覆盖 | 关闭 | 关闭 |
+| Adaptive | 与 Balanced 相同 | `500000` 下基于保守估算的路由；容量压力可作为安全覆盖 | 关闭 | 关闭 |
 | Custom | 可配置 | 可配置 | 关闭 | 可选，默认关闭 |
 
 History 会保护“最近 10 次 Agent 工具调用”和“最近 64,000 个工具结果 token”的并集。只有能够满足该策略最低回收量时，较早且合格的结果才会被改写。
+
+### Adaptive 的当前限制与上游能力请求
+
+Adaptive 在设置界面中显示为**保守成本**。它目前有意不是一个完美的自适应缓存优化器：它依据当前可得的请求 usage、模型价格和同一 tokenizer 的测量结果作保守估算；这些输入不完整时会安全降级。它无法观察或控制精确的缓存断点、缓存分配和缓存存活时间。
+
+要实现完美的 Adaptive，需要 DeepSeek 提供缓存断点控制，以及缓存 TTL/存活时间证据。这些能力目前没有通过 DeepSeek Harness 或提供商公开 API 提供给本插件。上游能力请求：@deepseek-ai 和 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。
 
 ## 兼容性
 

@@ -11,8 +11,8 @@
 
 Long-running agent tasks can accumulate a large amount of tool output. This community plugin adds selectable, auditable policies for reducing that tool-result context without modifying DeepSeek Harness core.
 
-- **Fresh** compresses a newly oversized tool-result segment.
-- **Aggregate** re-compresses material that has already been reduced but grows again.
+- **Fresh** pre-compresses a newly oversized tool-result segment before the model receives it.
+- **Aggregate** pre-compresses fresh material again when it still grows beyond its configured budget.
 - **History / micro-compact** replaces eligible old tool results while preserving recent working context.
 - **TailTrim** is an optional Custom-only tail reduction path.
 - **Native** preserves the original Harness-style head/middle/tail tool-result trimming as one explicit profile.
@@ -45,6 +45,12 @@ The runtime ships pinned official DeepSeek V4 tokenizer assets and verifies thei
 
 “Fail open” means the original tool result remains in context and an auditable skip or failure record is emitted. In particular, the Flash vision model has a price catalog entry but no verified bundled tokenizer mapping, so it is deliberately not treated as a text Flash alias. The selector does not estimate tokens with character counts and must not be treated as a generic multi-provider compressor.
 
+## Pre-compression and historical compression are different
+
+**Fresh and Aggregate are pre-compression, not History compression.** They reduce a newly produced tool result before it is first sent to the model. The reducer selects a safe strategy from the tool name, command arguments, and content evidence—for example JSON, search, file read, Git, package, build, test, or shell output. Because this only bounds new material and does not rewrite the serialized prompt prefix already sent to the provider, it does not break an existing prompt cache.
+
+**History / micro-compact is historical compression.** It selects old tool results outside the protected working set, then replaces each selected result in active context with a short, recoverable multi-line placeholder beginning `[Old tool result content cleared from active context]`. The placeholder retains the tool name, status, source reference, and retrieval instruction, while the original durable event remains recoverable. This intentionally rewrites an already-sent prefix, so it breaks or restarts the prompt cache. History protects the union of the newest 10 agent tool calls and the latest 64,000 tool-result tokens before it considers older results.
+
 ## How a profile is evaluated
 
 ```mermaid
@@ -72,6 +78,8 @@ An enabled mode is not guaranteed to run. Its trigger, safety checks, exact toke
 
 ## Profiles
 
+Profiles are orchestration policies, not separate compression algorithms. A profile composes the available methods by deciding which ones are enabled, their evaluation order, thresholds, retention set, minimum reclaim, and cache-safety trade-offs.
+
 | Profile | Fresh / Aggregate | History | Native tool trimming | TailTrim |
 | --- | --- | --- | --- | --- |
 | Off | Disabled | Disabled | Disabled | Disabled |
@@ -79,10 +87,16 @@ An enabled mode is not guaranteed to run. Its trigger, safety checks, exact toke
 | Balanced | `8192 → 3072` / `32768 → 12288` | Routine at `500000`; retain 10 recent calls and a 64,000-token tail | Disabled | Disabled |
 | Cache Strict | Same as Balanced | Capacity pressure: over `600000` tool-result tokens and at least 70% routed-context utilization | Disabled | Disabled |
 | Savings | `4096 → 1536` / `16384 → 4096` | Routine at `400000` | Disabled | Disabled |
-| Adaptive | Same as Balanced | Adaptive at `500000`, with a capacity-pressure safety override | Disabled | Disabled |
+| Adaptive | Same as Balanced | Conservative estimated routing at `500000`, with a capacity-pressure safety override | Disabled | Disabled |
 | Custom | Configurable | Configurable | Disabled | Optional, disabled by default |
 
 History protects the union of the newest 10 agent tool calls and the latest 64,000 tool-result tokens. Older eligible results are rewritten only when the policy can reclaim its required minimum.
+
+### Adaptive limitation and upstream capability request
+
+The Adaptive profile is shown in the settings UI as **Conservative cost**. It is intentionally not a perfect adaptive cache optimizer: it makes a conservative estimate from the currently available request usage, model pricing, and same-tokenizer measurements, and fails closed when those inputs are incomplete. It cannot observe or control the exact cache breakpoint, cache allocation, or cache lifetime.
+
+Perfect adaptive behavior requires DeepSeek to expose cache-breakpoint control and cache TTL/lifetime evidence. Those capabilities are not currently available to this plugin through public DeepSeek Harness or provider APIs. Upstream capability request: @deepseek-ai and [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness).
 
 ## Compatibility
 
