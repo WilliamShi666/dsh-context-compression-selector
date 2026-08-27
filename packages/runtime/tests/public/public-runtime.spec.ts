@@ -39,6 +39,8 @@ import * as RuntimeInvariant from '../../src/invariant.ts'
 import ToolResultPruner, {
   CONTEXT_COMPRESSION_SETTINGS_NAMESPACE,
   DEFAULT_CUSTOM_COMPRESSION_POLICY,
+  resolveConfig,
+  resolvePolicy,
 } from '../../src/index.ts'
 import type { CustomCompressionPolicy } from '../../src/index.ts'
 import { deepSeekV4TokenizerForModel } from '../../src/deepseek-v4-tokenizer.ts'
@@ -264,6 +266,21 @@ describe('standalone runtime on published Harness APIs', () => {
     expect(deepSeekV4TokenizerForModel('deepseek-v4-flash-vision-exp')).toBeUndefined()
   })
 
+  it.each([
+    ['off', Number.MAX_SAFE_INTEGER],
+    ['native', Number.MAX_SAFE_INTEGER],
+    ['balanced', 500_000],
+    ['cache-strict', 600_000],
+    ['savings', 400_000],
+    ['adaptive', 500_000],
+  ] as const)('resolves %s with the shared 10-call and 64k token-tail History working set', (profile, trigger) => {
+    const policy = resolvePolicy(resolveConfig(), profile)
+
+    expect(policy.historyTriggerTokens).toBe(trigger)
+    expect(policy.historyKeepRecentToolCalls).toBe(10)
+    expect(policy.historyKeepRecentTokens).toBe(64_000)
+  })
+
   it('lands a standard compaction/prune plus tool-result replacement without custom events', async () => {
     const ctx = await runtimeContext()
     const audit = captureAudit(ctx)
@@ -376,6 +393,45 @@ describe('standalone runtime on published Harness APIs', () => {
     expect(rewrites(audit.records()).some(entry => entry.component === 'history')).toBe(false)
   })
 
+  it('ages only results outside the recent tool-call and token-tail working set', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-history-tool-call-working-set'))
+    const batch = appendToolBatchTurn(
+      session,
+      1,
+      Array.from({ length: 5 }, () => 'working-set evidence '.repeat(1_000)),
+      true,
+    )
+    session.append('turn/start', { turn: 2 })
+    const view = measureForCompaction(ctx, session)
+    const counts = batch.resultSeqs.map((seq) => {
+      const entry = view.measuredNodes.find(node => node.seq === seq)?.count
+      if (entry?.kind !== 'exact-tokenizer') throw new Error('working-set test needs exact result counts')
+      return entry.tokens
+    })
+    const recentTailTokens = counts.slice(-3).reduce((sum, tokens) => sum + tokens, 0) - 1
+
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 2,
+      historyKeepRecentTokens: recentTailTokens,
+      historyMinReclaimTokens: 1,
+    }).await()
+
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(result.pruned).toHaveLength(2)
+    expect(result.pruned.map(entry => entry.originalSeq)).toEqual(batch.resultSeqs.slice(0, 2))
+    expect(result.pruned.map(entry => entry.originalSeq)).not.toContain(batch.resultSeqs.at(-1))
+    expect(result.pruned.map(entry => entry.originalSeq)).not.toContain(batch.resultSeqs.at(-2))
+    expect(result.pruned.map(entry => entry.originalSeq)).not.toContain(batch.resultSeqs.at(-3))
+  })
+
   it('proves isolated routine History against completed old turns', async () => {
     const ctx = await runtimeContext()
     const audit = captureAudit(ctx)
@@ -386,7 +442,7 @@ describe('standalone runtime on published Harness APIs', () => {
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
       historyTriggerTokens: 100,
-      historyKeepRecentTurns: 0,
+      historyKeepRecentToolCalls: 0,
       historyKeepRecentTokens: 1,
       historyMinReclaimTokens: 1,
     }).await()
@@ -420,7 +476,7 @@ describe('standalone runtime on published Harness APIs', () => {
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
       historyTriggerTokens: 40,
-      historyKeepRecentTurns: 0,
+      historyKeepRecentToolCalls: 0,
       historyKeepRecentTokens: 1,
       historyMinReclaimTokens: 1,
     }).await()
@@ -512,7 +568,7 @@ describe('standalone runtime on published Harness APIs', () => {
     firstCustom.fresh = { enabled: true, trigger: 512, target: 256 }
     firstCustom.aggregate.enabled = false
     firstCustom.history.enabled = false
-    if (firstCustom.version === 2) firstCustom.tailTrim.enabled = false
+    if (firstCustom.version === 3) firstCustom.tailTrim.enabled = false
     const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
     await ctx.settings.update(namespace, { profile: 'custom', custom: firstCustom })
     await ctx.plugin(ToolResultPruner, {
@@ -570,14 +626,13 @@ describe('standalone runtime on published Harness APIs', () => {
     const audit = captureAudit(ctx)
 
     const policy = structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) as CustomCompressionPolicy
-    if (policy.version !== 2) throw new Error('TailTrim public protocol test requires policy v2')
+    if (policy.version !== 3) throw new Error('TailTrim public protocol test requires policy v3')
     policy.fresh.enabled = false
     policy.aggregate.enabled = false
     policy.history.enabled = false
-    // Isolate TailTrim: keep no completed history turns protected so turn 2 is
-    // eligible while turn 1 remains protected by the first-surface invariant.
-    policy.history.keepRecentTurns = 0
-    policy.history.keepRecent = 0
+    // Isolate TailTrim: keep no History working set protected.
+    policy.history.keepRecentToolCalls = 0
+    policy.history.keepRecentTokens = 0
     policy.history.minReclaim = 1
     policy.tailTrim = { enabled: true, trigger: 8 }
     await ctx.settings.update(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE), {
@@ -666,13 +721,13 @@ describe('standalone runtime on published Harness APIs', () => {
       const audit = captureAudit(ctx)
 
       const policy = structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) as CustomCompressionPolicy
-      if (policy.version !== 2) throw new Error('TailTrim negative-path test requires policy v2')
+      if (policy.version !== 3) throw new Error('TailTrim negative-path test requires policy v3')
       policy.fresh.enabled = false
       policy.aggregate.enabled = false
       policy.history.enabled = false
       policy.history.trigger = Math.max(policy.history.trigger, options.minReclaim)
-      policy.history.keepRecentTurns = 0
-      policy.history.keepRecent = 0
+      policy.history.keepRecentToolCalls = 0
+      policy.history.keepRecentTokens = 0
       policy.history.minReclaim = options.minReclaim
       policy.tailTrim = { enabled: true, trigger: options.trigger }
       await ctx.settings.update(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE), {
@@ -750,12 +805,12 @@ describe('standalone runtime on published Harness APIs', () => {
     const audit = captureAudit(ctx)
 
     const policy = structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) as CustomCompressionPolicy
-    if (policy.version !== 2) throw new Error('orphan recovery test requires policy v2')
+    if (policy.version !== 3) throw new Error('orphan recovery test requires policy v3')
     policy.fresh.enabled = false
     policy.aggregate.enabled = false
     policy.history.enabled = false
-    policy.history.keepRecentTurns = 0
-    policy.history.keepRecent = 0
+    policy.history.keepRecentToolCalls = 0
+    policy.history.keepRecentTokens = 0
     policy.history.minReclaim = 1
     policy.tailTrim = { enabled: true, trigger: 8 }
     await ctx.settings.update(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE), {
@@ -928,14 +983,14 @@ describe('standalone runtime on published Harness APIs', () => {
     const audit = captureAudit(ctx)
 
     const policy = structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) as CustomCompressionPolicy
-    if (policy.version !== 2) throw new Error('full-pipeline public E2E requires policy v2')
+    if (policy.version !== 3) throw new Error('full-pipeline public E2E requires policy v3')
     policy.fresh = { enabled: true, trigger: 512, target: 256 }
     policy.aggregate = { enabled: true, trigger: 1_000, target: 400 }
     policy.history = {
       enabled: true,
       trigger: 40,
-      keepRecentTurns: 0,
-      keepRecent: 1,
+      keepRecentToolCalls: 0,
+      keepRecentTokens: 1,
       minReclaim: 1,
     }
     policy.prefixPolicy = 'pressure-break'

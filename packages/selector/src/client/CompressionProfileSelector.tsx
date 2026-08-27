@@ -10,7 +10,7 @@ import {
   type CompressionProfile,
   type CustomCompressionBudget,
   type CustomCompressionPolicy,
-  type CustomCompressionPolicyV2,
+  type CustomCompressionPolicyV3,
   type CustomHistoryPolicy,
   type ContextCompressionSettings,
 } from '../profiles.ts'
@@ -46,7 +46,7 @@ function SettingsCompressionProfileControls({
   const selectorAvailable = currentPreset !== 'minimal'
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [draft, setDraft] = useState<CustomCompressionPolicyV2 | null>(null)
+  const [draft, setDraft] = useState<CustomCompressionPolicyV3 | null>(null)
   const current = state.value?.profile ?? 'balanced'
   useEffect(() => {
     const custom = state.value?.custom
@@ -130,7 +130,7 @@ function CompressionProfileControls({
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [draft, setDraft] = useState<CustomCompressionPolicyV2 | null>(null)
+  const [draft, setDraft] = useState<CustomCompressionPolicyV3 | null>(null)
   const unavailableId = useId()
   const current = state.value?.profile ?? 'balanced'
   useEffect(() => {
@@ -228,9 +228,9 @@ function CompressionProfileControls({
 }
 
 interface CustomPolicyEditorProps {
-  value: CustomCompressionPolicyV2
+  value: CustomCompressionPolicyV3
   disabled: boolean
-  setValue: (value: CustomCompressionPolicyV2) => void
+  setValue: (value: CustomCompressionPolicyV3) => void
   save: () => Promise<void>
   reset: () => Promise<void>
   settle: (operation: () => Promise<void>) => void
@@ -304,8 +304,8 @@ function CustomPolicyEditor({ value, disabled, setValue, save, reset, settle, t 
         onEnabled={(enabled) => { setHistory({ enabled }) }}
         fields={[
           { label: t('custom.history.trigger'), value: value.history.trigger, set: (trigger) => { setHistory({ trigger }) }, ...unitBounds },
-          { label: t('custom.history.keepRecentTurns'), value: value.history.keepRecentTurns, set: (keepRecentTurns) => { setHistory({ keepRecentTurns }) }, integer: true, allowZero: true },
-          { label: t('custom.history.keepRecent'), value: value.history.keepRecent, set: (keepRecent) => { setHistory({ keepRecent }) }, allowZero: true, ...unitBounds },
+          { label: t('custom.history.keepRecentToolCalls'), value: value.history.keepRecentToolCalls, set: (keepRecentToolCalls) => { setHistory({ keepRecentToolCalls }) }, integer: true, allowZero: true },
+          { label: t('custom.history.keepRecentTokens'), value: value.history.keepRecentTokens, set: (keepRecentTokens) => { setHistory({ keepRecentTokens }) }, allowZero: true, ...unitBounds },
           { label: t('custom.history.minReclaim'), value: value.history.minReclaim, set: (minReclaim) => { setHistory({ minReclaim }) }, ...unitBounds },
         ]}
         step={unitStep}
@@ -406,9 +406,23 @@ function StageFields({ title, enabled, disabled, onEnabled, fields, step, fields
   )
 }
 
-function editableCustom(value: CustomCompressionPolicy): CustomCompressionPolicyV2 {
-  if (value.version === 2) return structuredClone(value)
-  return { ...structuredClone(value), version: 2, tailTrim: { enabled: false, trigger: 700_000 } }
+function editableCustom(value: CustomCompressionPolicy): CustomCompressionPolicyV3 {
+  if (value.version === 3) return structuredClone(value)
+  return {
+    version: 3,
+    unit: value.unit,
+    fresh: structuredClone(value.fresh),
+    aggregate: structuredClone(value.aggregate),
+    history: {
+      enabled: value.history.enabled,
+      trigger: value.history.trigger,
+      keepRecentToolCalls: 10,
+      keepRecentTokens: value.history.keepRecent,
+      minReclaim: value.history.minReclaim,
+    },
+    prefixPolicy: value.prefixPolicy,
+    tailTrim: value.version === 1 ? { enabled: false, trigger: 700_000 } : structuredClone(value.tailTrim),
+  }
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

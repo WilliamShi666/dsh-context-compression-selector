@@ -102,6 +102,7 @@ export type {
   CustomTailTrimPolicy,
   CustomCompressionPolicyV1,
   CustomCompressionPolicyV2,
+  CustomCompressionPolicyV3,
   ContextCompressionSettings,
   HistoryMode,
   PrunedEntry,
@@ -171,8 +172,8 @@ export class ToolResultPruner extends Service {
     aggregateTriggerTokens: z.number().step(1).min(1).required(false),
     aggregateTargetTokens: z.number().step(1).min(1).required(false),
     historyTriggerTokens: z.number().step(1).min(1).required(false),
-    historyKeepRecentTurns: z.number().step(1).min(0).required(false),
-    historyKeepRecentTokens: z.number().step(1).min(1).required(false),
+    historyKeepRecentToolCalls: z.number().step(1).min(0).required(false),
+    historyKeepRecentTokens: z.number().step(1).min(0).required(false),
     historyMinReclaimTokens: z.number().step(1).min(1).required(false),
   })
 
@@ -1092,26 +1093,7 @@ export class ToolResultPruner extends Service {
     const trigger = policy.historyTriggerTokens
     if (total <= trigger) return []
 
-    let latestTurn = 0
-    for (const event of session.events) {
-      if (event.type === 'turn/start') latestTurn = Math.max(latestTurn, event.data.turn)
-    }
-    const protectedSeqs = new Set<number>()
-    // `latestTurn` can be the currently open turn. Keep that working turn plus
-    // the configured number of preceding complete user turns.
-    const protectedTurnFloor = Math.max(1, latestTurn - policy.historyKeepRecentTurns)
-    for (const candidate of candidates) {
-      if (candidate.event.data.turn >= protectedTurnFloor) protectedSeqs.add(candidate.seq)
-    }
-    // Tail working set, independent of turn count (OpenCode-style protection).
-    let recentTokens = 0
-    const recentBudget = policy.historyKeepRecentTokens
-    for (let index = candidates.length - 1; index >= 0 && recentTokens < recentBudget; index--) {
-      const candidate = candidates[index]
-      if (candidate === undefined) continue
-      protectedSeqs.add(candidate.seq)
-      recentTokens += exactTokens(candidate.count) ?? 0
-    }
+    const protectedSeqs = this.protectedHistoryCandidateSeqs(candidates, policy)
     const eligible = candidates.filter((candidate) => {
       if (candidate.call.name === 'context_compression_retrieve') return false
       if (protectedSeqs.has(candidate.seq)) return false
@@ -1187,14 +1169,20 @@ export class ToolResultPruner extends Service {
   ): Set<number> | null {
     const candidates = this.snapshot(session, view)
     if (candidates.some(candidate => exactTokens(candidate.count) === undefined)) return null
-    let latestTurn = 0
-    for (const event of session.events) {
-      if (event.type === 'turn/start') latestTurn = Math.max(latestTurn, event.data.turn)
-    }
+    return this.protectedHistoryCandidateSeqs(candidates, policy)
+  }
+
+  /** Select the newest completed tool calls and token tail for History-derived stages. */
+  private protectedHistoryCandidateSeqs(
+    candidates: readonly SnapshotCandidate[],
+    policy: CompressionPolicy,
+  ): Set<number> {
     const protectedSeqs = new Set<number>()
-    const protectedTurnFloor = Math.max(1, latestTurn - policy.historyKeepRecentTurns)
-    for (const candidate of candidates) {
-      if (candidate.event.data.turn >= protectedTurnFloor) protectedSeqs.add(candidate.seq)
+    for (let index = candidates.length - 1;
+      index >= 0 && candidates.length - index <= policy.historyKeepRecentToolCalls;
+      index--) {
+      const candidate = candidates[index]
+      if (candidate !== undefined) protectedSeqs.add(candidate.seq)
     }
     let recentTokens = 0
     for (let index = candidates.length - 1;

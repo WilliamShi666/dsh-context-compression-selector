@@ -211,14 +211,14 @@ try {
   const audit = captureAudit(ctx)
 
   const policy = structuredClone(Runtime.DEFAULT_CUSTOM_COMPRESSION_POLICY)
-  assert(policy.version === 2, 'TailTrim requires the public Custom v2 policy')
+  assert(policy.version === 3, 'TailTrim requires the public Custom v3 policy')
   policy.fresh = { enabled: true, trigger: 512, target: 256 }
   policy.aggregate = { enabled: true, trigger: 1_000, target: 400 }
   policy.history = {
     enabled: true,
     trigger: 40,
-    keepRecentTurns: 0,
-    keepRecent: 1,
+    keepRecentToolCalls: 0,
+    keepRecentTokens: 1,
     minReclaim: 1,
   }
   policy.prefixPolicy = 'pressure-break'
@@ -288,8 +288,8 @@ try {
   capacityPolicy.history = {
     enabled: true,
     trigger: 40,
-    keepRecentTurns: 0,
-    keepRecent: 1,
+    keepRecentToolCalls: 0,
+    keepRecentTokens: 1,
     minReclaim: 1,
   }
   capacityPolicy.prefixPolicy = 'preserve'

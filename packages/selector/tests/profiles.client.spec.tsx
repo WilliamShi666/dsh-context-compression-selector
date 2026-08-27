@@ -94,8 +94,8 @@ const COPY: Record<string, string> = {
   'custom.aggregate.target': 'Aggregate target',
   'custom.history.enabled': 'Enable History',
   'custom.history.trigger': 'History trigger',
-  'custom.history.keepRecentTurns': 'Protected recent turns',
-  'custom.history.keepRecent': 'Protected recent window',
+  'custom.history.keepRecentToolCalls': 'Protected recent tool calls',
+  'custom.history.keepRecentTokens': 'Protected recent tool-result tail',
   'custom.history.minReclaim': 'Minimum reclaim',
   'custom.prefixPolicy': 'Sent-prefix policy',
   'custom.prefixPolicy.preserve': 'Preserve until capacity pressure',
@@ -342,7 +342,7 @@ describe('context compression profiles', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Custom policy' }))
     await waitFor(() => {
       expect(saveCustom).toHaveBeenCalledWith(expect.objectContaining({
-        version: 2,
+        version: 3,
         unit: 'tokens',
         fresh: { enabled: true, trigger: 8_192, target: 4_096 },
         tailTrim: { enabled: true, trigger: 49_152 },
@@ -353,7 +353,7 @@ describe('context compression profiles', () => {
     await waitFor(() => { expect(resetCustom).toHaveBeenCalledOnce() })
   })
 
-  it('applies percent bounds only to measured windows and keeps turn counts unbounded', () => {
+  it('applies percent bounds only to measured windows and keeps tool-call counts unbounded', () => {
     renderReady(vi.fn(() => Promise.resolve()), true, key => COPY[key] ?? key, {
       value: {
         profile: 'custom',
@@ -377,9 +377,9 @@ describe('context compression profiles', () => {
 
     expect(screen.getByLabelText<HTMLInputElement>('Fresh trigger').min).toBe('0.01')
     expect(screen.getByLabelText<HTMLInputElement>('Fresh trigger').max).toBe('100')
-    expect(screen.getByLabelText<HTMLInputElement>('Protected recent turns').min).toBe('0')
-    expect(screen.getByLabelText<HTMLInputElement>('Protected recent turns').max).toBe('')
-    expect(screen.getByLabelText<HTMLInputElement>('Protected recent turns').step).toBe('1')
+    expect(screen.getByLabelText<HTMLInputElement>('Protected recent tool calls').min).toBe('0')
+    expect(screen.getByLabelText<HTMLInputElement>('Protected recent tool calls').max).toBe('')
+    expect(screen.getByLabelText<HTMLInputElement>('Protected recent tool calls').step).toBe('1')
   })
 
   it.each([

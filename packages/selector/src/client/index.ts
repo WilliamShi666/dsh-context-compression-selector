@@ -29,6 +29,7 @@ function sameCustomPolicy(
   left: ContextCompressionSettings['custom'],
   right: ContextCompressionSettings['custom'],
 ): boolean {
+  if (left.version !== 3 || right.version !== 3) return false
   return left.version === right.version
     && left.unit === right.unit
     && left.prefixPolicy === right.prefixPolicy
@@ -40,12 +41,11 @@ function sameCustomPolicy(
     && left.aggregate.target === right.aggregate.target
     && left.history.enabled === right.history.enabled
     && left.history.trigger === right.history.trigger
-    && left.history.keepRecentTurns === right.history.keepRecentTurns
-    && left.history.keepRecent === right.history.keepRecent
+    && left.history.keepRecentToolCalls === right.history.keepRecentToolCalls
+    && left.history.keepRecentTokens === right.history.keepRecentTokens
     && left.history.minReclaim === right.history.minReclaim
-    && (left.version !== 2 || right.version !== 2
-      || (left.tailTrim.enabled === right.tailTrim.enabled
-        && left.tailTrim.trigger === right.tailTrim.trigger))
+    && left.tailTrim.enabled === right.tailTrim.enabled
+    && left.tailTrim.trigger === right.tailTrim.trigger
 }
 
 export function apply(ctx: ClientContext): void {
@@ -79,7 +79,7 @@ export function apply(ctx: ClientContext): void {
         && sameCustomPolicy(settings.custom, custom),
     ),
     resetCustom: () => writeAndConfirm(
-      () => scope.unset('custom'),
+      () => scope.set('custom', structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY)),
       settings => isCustomCompressionPolicy(settings.custom)
         && sameCustomPolicy(settings.custom, DEFAULT_CUSTOM_COMPRESSION_POLICY),
     ),

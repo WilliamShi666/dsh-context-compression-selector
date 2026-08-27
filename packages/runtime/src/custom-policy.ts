@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import type {
   CompressionPolicy,
   CustomCompressionPolicy,
+  CustomCompressionPolicyV3,
 } from './types.ts'
 
 const budgetSchema = z.object({
@@ -13,7 +14,7 @@ const budgetSchema = z.object({
   target: z.number().required(),
 }).required()
 
-const historySchema = z.object({
+const legacyHistorySchema = z.object({
   enabled: z.boolean().required(),
   trigger: z.number().required(),
   keepRecentTurns: z.number().step(1).min(0).required(),
@@ -21,12 +22,25 @@ const historySchema = z.object({
   minReclaim: z.number().required(),
 }).required()
 
+const historySchema = z.object({
+  enabled: z.boolean().required(),
+  trigger: z.number().required(),
+  keepRecentToolCalls: z.number().step(1).min(0).required(),
+  keepRecentTokens: z.number().required(),
+  minReclaim: z.number().required(),
+}).required()
+
+const tailTrimSchema = z.object({
+  enabled: z.boolean().required(),
+  trigger: z.number().required(),
+}).required()
+
 const customCompressionPolicyV1InputSchema = z.object({
   version: z.const(1).required(),
   unit: z.union(['tokens', 'context-percent']).required(),
   fresh: budgetSchema,
   aggregate: budgetSchema,
-  history: historySchema,
+  history: legacyHistorySchema,
   prefixPolicy: z.union(['preserve', 'pressure-break']).required(),
 }).required()
 
@@ -35,12 +49,19 @@ const customCompressionPolicyV2InputSchema = z.object({
   unit: z.union(['tokens', 'context-percent']).required(),
   fresh: budgetSchema,
   aggregate: budgetSchema,
+  history: legacyHistorySchema,
+  prefixPolicy: z.union(['preserve', 'pressure-break']).required(),
+  tailTrim: tailTrimSchema,
+}).required()
+
+const customCompressionPolicyV3InputSchema = z.object({
+  version: z.const(3).required(),
+  unit: z.union(['tokens', 'context-percent']).required(),
+  fresh: budgetSchema,
+  aggregate: budgetSchema,
   history: historySchema,
   prefixPolicy: z.union(['preserve', 'pressure-break']).required(),
-  tailTrim: z.object({
-    enabled: z.boolean().required(),
-    trigger: z.number().required(),
-  }).required(),
+  tailTrim: tailTrimSchema,
 }).required()
 
 /** Canonical Custom document accepted by Host settings and the runtime resolver. */
@@ -50,23 +71,26 @@ export const CustomCompressionPolicySchema: z<CustomCompressionPolicy> = z.trans
     assertExactPolicyShape(value)
     const policy = value.version === 1
       ? customCompressionPolicyV1InputSchema(value) as CustomCompressionPolicy
-      : customCompressionPolicyV2InputSchema(value) as CustomCompressionPolicy
-    assertCanonicalRelations(policy)
-    return deepFreeze(structuredClone(policy))
+      : value.version === 2
+        ? customCompressionPolicyV2InputSchema(value) as CustomCompressionPolicy
+        : customCompressionPolicyV3InputSchema(value) as CustomCompressionPolicy
+    const canonical = canonicalizeCustomPolicy(policy)
+    assertCanonicalRelations(canonical)
+    return deepFreeze(structuredClone(canonical))
   },
 ) as z<CustomCompressionPolicy>
 
 /** Balanced-equivalent Custom policy stored as one token-canonical document. */
-export const DEFAULT_CUSTOM_COMPRESSION_POLICY: CustomCompressionPolicy = deepFreeze({
-  version: 2,
+export const DEFAULT_CUSTOM_COMPRESSION_POLICY: CustomCompressionPolicyV3 = deepFreeze({
+  version: 3,
   unit: 'tokens',
   fresh: { enabled: true, trigger: 8_192, target: 3_072 },
   aggregate: { enabled: true, trigger: 32_768, target: 12_288 },
   history: {
     enabled: true,
     trigger: 500_000,
-    keepRecentTurns: 4,
-    keepRecent: 128_000,
+    keepRecentToolCalls: 10,
+    keepRecentTokens: 64_000,
     minReclaim: 96_000,
   },
   prefixPolicy: 'pressure-break',
@@ -89,7 +113,7 @@ export function resolveCustomPolicy(
   value: CustomCompressionPolicy,
   options: CustomPolicyResolutionOptions = {},
 ): CompressionPolicy {
-  const policy = CustomCompressionPolicySchema(value)
+  const policy = canonicalizeCustomPolicy(CustomCompressionPolicySchema(value))
   const effective = (name: string, amount: number): number => {
     if (policy.unit === 'tokens') return amount
     const contextWindow = options.contextWindowTokens
@@ -116,34 +140,51 @@ export function resolveCustomPolicy(
     aggregateTriggerTokens: effective('Aggregate trigger', policy.aggregate.trigger),
     aggregateTargetTokens: effective('Aggregate target', policy.aggregate.target),
     historyTriggerTokens: effective('History trigger', policy.history.trigger),
-    historyKeepRecentTurns: policy.history.keepRecentTurns,
-    historyKeepRecentTokens: effective('History recent window', policy.history.keepRecent),
+    historyKeepRecentToolCalls: policy.history.keepRecentToolCalls,
+    historyKeepRecentTokens: effective('History recent token tail', policy.history.keepRecentTokens),
     historyMinReclaimTokens: effective('History min-reclaim', policy.history.minReclaim),
-    ...policy.version === 1 ? {} : {
-      tailTrim: {
-        enabled: policy.tailTrim.enabled,
-        triggerTokens: effective('TailTrim trigger', policy.tailTrim.trigger),
-      },
+    tailTrim: {
+      enabled: policy.tailTrim.enabled,
+      triggerTokens: effective('TailTrim trigger', policy.tailTrim.trigger),
     },
   }
   assertEffectiveRelations(resolved)
   return deepFreeze(resolved)
 }
 
-function measuredValues(policy: CustomCompressionPolicy): readonly number[] {
+function canonicalizeCustomPolicy(policy: CustomCompressionPolicy): CustomCompressionPolicyV3 {
+  if (policy.version === 3) return policy
+  return {
+    version: 3,
+    unit: policy.unit,
+    fresh: policy.fresh,
+    aggregate: policy.aggregate,
+    history: {
+      enabled: policy.history.enabled,
+      trigger: policy.history.trigger,
+      keepRecentToolCalls: 10,
+      keepRecentTokens: policy.history.keepRecent,
+      minReclaim: policy.history.minReclaim,
+    },
+    prefixPolicy: policy.prefixPolicy,
+    tailTrim: policy.version === 1 ? { enabled: false, trigger: 700_000 } : policy.tailTrim,
+  }
+}
+
+function measuredValues(policy: CustomCompressionPolicyV3): readonly number[] {
   return [
     policy.fresh.trigger,
     policy.fresh.target,
     policy.aggregate.trigger,
     policy.aggregate.target,
     policy.history.trigger,
-    policy.history.keepRecent,
+    policy.history.keepRecentTokens,
     policy.history.minReclaim,
-    ...policy.version === 1 ? [] : [policy.tailTrim.trigger],
+    policy.tailTrim.trigger,
   ]
 }
 
-function validMeasuredValues(policy: CustomCompressionPolicy): boolean {
+function validMeasuredValues(policy: CustomCompressionPolicyV3): boolean {
   const values = measuredValues(policy)
   const positive = [
     policy.fresh.trigger,
@@ -152,18 +193,18 @@ function validMeasuredValues(policy: CustomCompressionPolicy): boolean {
     policy.aggregate.target,
     policy.history.trigger,
     policy.history.minReclaim,
-    ...policy.version === 1 ? [] : [policy.tailTrim.trigger],
+    policy.tailTrim.trigger,
   ]
-  if (!positive.every(value => value > 0) || policy.history.keepRecent < 0) return false
+  if (!positive.every(value => value > 0)
+    || policy.history.keepRecentTokens < 0
+    || !Number.isSafeInteger(policy.history.keepRecentToolCalls)
+    || policy.history.keepRecentToolCalls < 0) return false
   return policy.unit === 'tokens'
     ? values.every(Number.isSafeInteger)
     : values.every(value => Number.isFinite(value) && value <= 100)
 }
 
-function assertCanonicalRelations(policy: CustomCompressionPolicy): void {
-  if (!Number.isSafeInteger(policy.history.keepRecentTurns) || policy.history.keepRecentTurns < 0) {
-    throw new TypeError('Custom History recent turns must be a non-negative safe integer')
-  }
+function assertCanonicalRelations(policy: CustomCompressionPolicyV3): void {
   if (!validMeasuredValues(policy)) {
     throw new TypeError('Custom measured values must use the selected canonical unit')
   }
@@ -180,8 +221,8 @@ function assertCanonicalRelations(policy: CustomCompressionPolicy): void {
 
 function assertExactPolicyShape(value: unknown): asserts value is Record<string, unknown> {
   if (!isPlainRecord(value)) throw new TypeError('Custom must be a plain object')
-  if (value.version !== 1 && value.version !== 2) {
-    throw new TypeError('Custom version must be 1 or 2')
+  if (value.version !== 1 && value.version !== 2 && value.version !== 3) {
+    throw new TypeError('Custom version must be 1, 2, or 3')
   }
   assertExactKeys(
     value,
@@ -194,10 +235,12 @@ function assertExactPolicyShape(value: unknown): asserts value is Record<string,
   assertExactKeys(value.aggregate, ['enabled', 'trigger', 'target'], 'Custom Aggregate')
   assertExactKeys(
     value.history,
-    ['enabled', 'trigger', 'keepRecentTurns', 'keepRecent', 'minReclaim'],
+    value.version === 3
+      ? ['enabled', 'trigger', 'keepRecentToolCalls', 'keepRecentTokens', 'minReclaim']
+      : ['enabled', 'trigger', 'keepRecentTurns', 'keepRecent', 'minReclaim'],
     'Custom History',
   )
-  if (value.version === 2) {
+  if (value.version !== 1) {
     assertExactKeys(value.tailTrim, ['enabled', 'trigger'], 'Custom TailTrim')
   }
 }

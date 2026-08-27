@@ -69,7 +69,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   'aggregateTriggerTokens',
   'aggregateTargetTokens',
   'historyTriggerTokens',
-  'historyKeepRecentTurns',
+  'historyKeepRecentToolCalls',
   'historyKeepRecentTokens',
   'historyMinReclaimTokens',
 ])
@@ -83,6 +83,7 @@ const LEGACY_GATE_REPLACEMENTS: Readonly<Record<string, string>> = Object.freeze
   historyTriggerChars: 'historyTriggerTokens',
   historyKeepRecentChars: 'historyKeepRecentTokens',
   historyMinReclaimChars: 'historyMinReclaimTokens',
+  historyKeepRecentTurns: 'historyKeepRecentToolCalls',
 })
 
 /**
@@ -134,7 +135,7 @@ export function resolveConfig(config: ToolResultPruneConfig = {}): ResolvedConfi
     ...config.aggregateTriggerTokens === undefined ? {} : { aggregateTriggerTokens: config.aggregateTriggerTokens },
     ...config.aggregateTargetTokens === undefined ? {} : { aggregateTargetTokens: config.aggregateTargetTokens },
     ...config.historyTriggerTokens === undefined ? {} : { historyTriggerTokens: config.historyTriggerTokens },
-    ...config.historyKeepRecentTurns === undefined ? {} : { historyKeepRecentTurns: config.historyKeepRecentTurns },
+    ...config.historyKeepRecentToolCalls === undefined ? {} : { historyKeepRecentToolCalls: config.historyKeepRecentToolCalls },
     ...config.historyKeepRecentTokens === undefined ? {} : { historyKeepRecentTokens: config.historyKeepRecentTokens },
     ...config.historyMinReclaimTokens === undefined ? {} : { historyMinReclaimTokens: config.historyMinReclaimTokens },
   }
@@ -146,13 +147,16 @@ export function resolveConfig(config: ToolResultPruneConfig = {}): ResolvedConfi
   for (const key of [
     'nativeTriggerTokens', 'nativeTargetTokens', 'freshTriggerTokens', 'freshTargetTokens',
     'aggregateTriggerTokens', 'aggregateTargetTokens', 'historyTriggerTokens',
-    'historyKeepRecentTokens', 'historyMinReclaimTokens',
+    'historyMinReclaimTokens',
   ] as const) {
     const value = resolved[key]
     if (value !== undefined) assertPositiveInteger(key, value)
   }
-  if (resolved.historyKeepRecentTurns !== undefined) {
-    assertNonNegativeInteger('historyKeepRecentTurns', resolved.historyKeepRecentTurns)
+  if (resolved.historyKeepRecentToolCalls !== undefined) {
+    assertNonNegativeInteger('historyKeepRecentToolCalls', resolved.historyKeepRecentToolCalls)
+  }
+  if (resolved.historyKeepRecentTokens !== undefined) {
+    assertNonNegativeInteger('historyKeepRecentTokens', resolved.historyKeepRecentTokens)
   }
   assertTargetBelowTrigger('native', resolved.nativeTargetTokens, resolved.nativeTriggerTokens)
   assertTargetBelowTrigger('fresh', resolved.freshTargetTokens, resolved.freshTriggerTokens)
@@ -181,48 +185,48 @@ export function resolvePolicy(
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: Number.MAX_SAFE_INTEGER, freshTargetTokens: Number.MAX_SAFE_INTEGER,
       aggregateTriggerTokens: Number.MAX_SAFE_INTEGER, aggregateTargetTokens: Number.MAX_SAFE_INTEGER,
-      historyTriggerTokens: Number.MAX_SAFE_INTEGER, historyKeepRecentTurns: 2,
-      historyKeepRecentTokens: Number.MAX_SAFE_INTEGER, historyMinReclaimTokens: Number.MAX_SAFE_INTEGER,
+      historyTriggerTokens: Number.MAX_SAFE_INTEGER, historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 64_000, historyMinReclaimTokens: Number.MAX_SAFE_INTEGER,
     },
     native: {
       freshEnabled: false, aggregateEnabled: false, historyMode: 'disabled',
       nativeTriggerTokens: 4_096, nativeTargetTokens: 2_048,
       freshTriggerTokens: Number.MAX_SAFE_INTEGER, freshTargetTokens: Number.MAX_SAFE_INTEGER,
       aggregateTriggerTokens: Number.MAX_SAFE_INTEGER, aggregateTargetTokens: Number.MAX_SAFE_INTEGER,
-      historyTriggerTokens: Number.MAX_SAFE_INTEGER, historyKeepRecentTurns: 2,
-      historyKeepRecentTokens: Number.MAX_SAFE_INTEGER, historyMinReclaimTokens: Number.MAX_SAFE_INTEGER,
+      historyTriggerTokens: Number.MAX_SAFE_INTEGER, historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 64_000, historyMinReclaimTokens: Number.MAX_SAFE_INTEGER,
     },
     balanced: {
       freshEnabled: true, aggregateEnabled: true, historyMode: 'routine',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 8_192, freshTargetTokens: 3_072,
       aggregateTriggerTokens: 32_768, aggregateTargetTokens: 12_288,
-      historyTriggerTokens: 500_000, historyKeepRecentTurns: 4,
-      historyKeepRecentTokens: 128_000, historyMinReclaimTokens: 96_000,
+      historyTriggerTokens: 500_000, historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 96_000,
     },
     'cache-strict': {
       freshEnabled: true, aggregateEnabled: true, historyMode: 'capacity-pressure',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 8_192, freshTargetTokens: 3_072,
       aggregateTriggerTokens: 32_768, aggregateTargetTokens: 12_288,
-      historyTriggerTokens: 600_000, historyKeepRecentTurns: 4,
-      historyKeepRecentTokens: 128_000, historyMinReclaimTokens: 128_000,
+      historyTriggerTokens: 600_000, historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 128_000,
     },
     savings: {
       freshEnabled: true, aggregateEnabled: true, historyMode: 'routine',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 4_096, freshTargetTokens: 1_536,
       aggregateTriggerTokens: 16_384, aggregateTargetTokens: 4_096,
-      historyTriggerTokens: 450_000, historyKeepRecentTurns: 3,
-      historyKeepRecentTokens: 96_000, historyMinReclaimTokens: 128_000,
+      historyTriggerTokens: 400_000, historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 128_000,
     },
     adaptive: {
       freshEnabled: true, aggregateEnabled: true, historyMode: 'adaptive',
       nativeTriggerTokens: Number.MAX_SAFE_INTEGER, nativeTargetTokens: Number.MAX_SAFE_INTEGER,
       freshTriggerTokens: 8_192, freshTargetTokens: 3_072,
       aggregateTriggerTokens: 32_768, aggregateTargetTokens: 12_288,
-      historyTriggerTokens: 500_000, historyKeepRecentTurns: 4,
-      historyKeepRecentTokens: 128_000, historyMinReclaimTokens: 96_000,
+      historyTriggerTokens: 500_000, historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 64_000, historyMinReclaimTokens: 96_000,
     },
   }
   const preset = presets[profile]
@@ -236,7 +240,7 @@ export function resolvePolicy(
     aggregateTriggerTokens: config.aggregateTriggerTokens ?? preset.aggregateTriggerTokens,
     aggregateTargetTokens: config.aggregateTargetTokens ?? preset.aggregateTargetTokens,
     historyTriggerTokens: config.historyTriggerTokens ?? preset.historyTriggerTokens,
-    historyKeepRecentTurns: config.historyKeepRecentTurns ?? preset.historyKeepRecentTurns,
+    historyKeepRecentToolCalls: config.historyKeepRecentToolCalls ?? preset.historyKeepRecentToolCalls,
     historyKeepRecentTokens: config.historyKeepRecentTokens ?? preset.historyKeepRecentTokens,
     historyMinReclaimTokens: config.historyMinReclaimTokens ?? preset.historyMinReclaimTokens,
   }

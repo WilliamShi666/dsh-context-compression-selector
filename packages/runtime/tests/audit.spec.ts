@@ -7,15 +7,15 @@ import {
 import type { CompressionAuditRecord } from '../src/audit.ts'
 
 const custom = {
-  version: 2 as const,
+  version: 3 as const,
   unit: 'tokens' as const,
   fresh: { enabled: true, trigger: 8_192, target: 3_072 },
   aggregate: { enabled: true, trigger: 32_768, target: 12_288 },
   history: {
     enabled: true,
     trigger: 500_000,
-    keepRecentTurns: 4,
-    keepRecent: 128_000,
+    keepRecentToolCalls: 10,
+    keepRecentTokens: 64_000,
     minReclaim: 96_000,
   },
   prefixPolicy: 'pressure-break' as const,

@@ -47,7 +47,7 @@ UI 提供 `off`、`native`、`balanced`、`cache-strict`、`savings`、`adaptive
 
 - Fresh `8192 -> 3072`
 - Aggregate `32768 -> 12288`
-- History 触发 `500000`，保留 4 轮 / `128000` tokens，最少回收 `96000`
+- History 触发 `500000`，保留最近 10 次工具调用 + `64000` 工具结果 tokens，最少回收 `96000`
 - `prefixPolicy=pressure-break`
 - TailTrim 默认关闭，触发 `700000`
 

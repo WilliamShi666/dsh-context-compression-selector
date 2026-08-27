@@ -87,7 +87,7 @@ The flow first shows profile composition, then the conceptual decision order ins
 | --- | --- | --- | --- |
 | Fresh | A newly accumulated tool-result segment becomes too large. | Compresses the fresh segment to its configured target. | Plugin |
 | Aggregate | Previously compressed material has grown large again. | Re-aggregates that material into a smaller representation. | Plugin |
-| History / micro-compact | Older tool-result history should be aged, either routinely or under capacity pressure. | Reclaims older eligible history while retaining the configured recent turns/token budget. | Plugin |
+| History / micro-compact | Older tool-result history should be aged, either routinely or under capacity pressure. | Reclaims older eligible history while retaining the configured recent tool-call and tool-result token-tail working set. | Plugin |
 | TailTrim | Context pressure remains high and there is a safe eligible tool group near the tail. | Removes eligible older tool groups while preserving traceability and recovery evidence. | Plugin |
 | Native auto-compact | Harness/model decides that its own automatic compaction is needed. | A model-driven native compaction occurs independently of this plugin. | Harness / model |
 
@@ -95,7 +95,7 @@ The flow first shows profile composition, then the conceptual decision order ins
 | --- | --- | --- | --- |
 | Fresh | 新累积的工具结果片段过大。 | 将该新鲜片段压缩到已配置的目标大小。 | 插件 |
 | Aggregate | 已压缩的内容再次增长到较大规模。 | 将这些内容再次归并为更小的表示。 | 插件 |
-| History / micro-compact | 较早的工具结果历史需要在日常或容量压力下老化。 | 在保留配置的最近轮次/token 预算的前提下，回收合格的较早历史。 | 插件 |
+| History / micro-compact | 较早的工具结果历史需要在日常或容量压力下老化。 | 在保留配置的最近工具调用与工具结果 token 尾窗工作集的前提下，回收合格的较早历史。 | 插件 |
 | TailTrim | 上下文压力仍高，且尾部附近存在安全、合格的工具组。 | 移除合格的较早工具组，同时保留可追溯性和恢复证据。 | 插件 |
 | Native auto-compact | Harness/模型判定需要自身的自动压缩。 | 与本插件无关的、模型驱动的原生压缩。 | Harness / 模型 |
 
@@ -111,20 +111,20 @@ In this project, a **compression profile** is not a Harness preset. It is the se
 | --- | --- | --- | --- | --- | --- |
 | Off | disabled | disabled | disabled | disabled | No selector-driven tool-result compression. |
 | Native | disabled | disabled | enabled, `4096 → 2048` | disabled | Preserves the original single native-style tool-result approach. |
-| Balanced | enabled, `8192 → 3072` / `32768 → 12288` | routine at `500000`; retain 4 turns / `128000`; reclaim at least `96000` | disabled | Everyday balance of preservation and context control. |
-| Cache Strict | enabled, same Fresh/Aggregate values as Balanced | capacity-pressure only at `600000`; retain 4 turns / `128000`; reclaim at least `128000` | disabled | Favors cache-prefix stability; delays history aging until real pressure. |
-| Savings | enabled, `4096 → 1536` / `16384 → 4096` | routine at `450000`; retain 3 turns / `96000`; reclaim at least `128000` | disabled | Earlier and stronger reduction for lower context cost. |
-| Adaptive | enabled, same Fresh/Aggregate values as Balanced | adaptive at `500000`; retain 4 turns / `128000`; reclaim at least `96000` | disabled | Uses the existing adaptive policy model; it is not a claim of exact future price optimization. |
+| Balanced | enabled, `8192 → 3072` / `32768 → 12288` | routine at `500000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `96000` | disabled | Everyday balance of preservation and context control. |
+| Cache Strict | enabled, same Fresh/Aggregate values as Balanced | capacity-pressure only at `600000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Favors cache-prefix stability; delays history aging until real pressure. |
+| Savings | enabled, `4096 → 1536` / `16384 → 4096` | routine at `400000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Earlier and stronger reduction for lower context cost. |
+| Adaptive | enabled, same Fresh/Aggregate values as Balanced | adaptive at `500000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `96000` | disabled | Uses the existing adaptive policy model; it is not a claim of exact future price optimization. |
 | Custom | individually configurable | individually configurable | configurable native fallback | Custom-only, off by default | Full user control; the current default is shown below. |
 
 | 压缩 Profile | Fresh / Aggregate | History 行为 | 原生“头-中-尾”工具结果裁剪 | TailTrim | 核心取舍 |
 | --- | --- | --- | --- | --- | --- |
 | Off | 关闭 | 关闭 | 关闭 | 关闭 | 不进行由选择器驱动的工具结果压缩。 |
 | Native | 关闭 | 关闭 | 启用，`4096 → 2048` | 关闭 | 保留原有的单一原生风格工具结果处理方式。 |
-| Balanced | 启用，`8192 → 3072` / `32768 → 12288` | 在 `500000` 日常触发；保留 4 轮 / `128000`；至少回收 `96000` | 关闭 | 在信息保留和上下文控制间取得日常平衡。 |
-| Cache Strict | 启用，Fresh/Aggregate 与 Balanced 相同 | 仅容量压力下于 `600000` 触发；保留 4 轮 / `128000`；至少回收 `128000` | 关闭 | 优先维持缓存前缀稳定；只有真实压力时才老化历史。 |
-| Savings | 启用，`4096 → 1536` / `16384 → 4096` | 在 `450000` 日常触发；保留 3 轮 / `96000`；至少回收 `128000` | 关闭 | 更早、更强地收缩，降低上下文成本。 |
-| Adaptive | 启用，Fresh/Aggregate 与 Balanced 相同 | `500000` 下的 adaptive；保留 4 轮 / `128000`；至少回收 `96000` | 关闭 | 使用现有 adaptive 策略模型；不声称能精确预测未来价格最优解。 |
+| Balanced | 启用，`8192 → 3072` / `32768 → 12288` | 在 `500000` 日常触发；保留 10 次调用 + `64000` 工具结果 token；至少回收 `96000` | 关闭 | 在信息保留和上下文控制间取得日常平衡。 |
+| Cache Strict | 启用，Fresh/Aggregate 与 Balanced 相同 | 仅容量压力下于 `600000` 触发；保留 10 次调用 + `64000` 工具结果 token；至少回收 `128000` | 关闭 | 优先维持缓存前缀稳定；只有真实压力时才老化历史。 |
+| Savings | 启用，`4096 → 1536` / `16384 → 4096` | 在 `400000` 日常触发；保留 10 次调用 + `64000` 工具结果 token；至少回收 `128000` | 关闭 | 更早、更强地收缩，降低上下文成本。 |
+| Adaptive | 启用，Fresh/Aggregate 与 Balanced 相同 | `500000` 下的 adaptive；保留 10 次调用 + `64000` 工具结果 token；至少回收 `96000` | 关闭 | 使用现有 adaptive 策略模型；不声称能精确预测未来价格最优解。 |
 | Custom | 可逐项配置 | 可逐项配置 | 可配置 native fallback | 仅 Custom 可用，默认关闭 | 完全由用户控制；当前默认值见下表。 |
 
 `native` is a tool-result profile, while **native auto-compact** is a separate Harness/model mechanism. These names are similar but must not be conflated: selecting the Native profile does not claim to tune the model-driven native auto-compact strategy.
@@ -197,7 +197,7 @@ Custom Profile 是日常默认策略。其参数均有明确含义：Fresh 和 A
 | Fresh | trigger `8192`, target `3072` | Reduce a fresh oversized segment. / 压缩过大的新鲜片段。 |
 | Aggregate | trigger `32768`, target `12288` | Re-aggregate already compressed material that grew again. / 再次归并重新增长的已压缩内容。 |
 | History / micro-compact | trigger `500000` tokens | Start aging eligible older tool-result history. / 开始老化合格的较早工具结果历史。 |
-| History retention / History 保留 | latest 4 turns and `128000` tokens | Protect recent history before reclamation. / 回收前保护近期历史。 |
+| History retention / History 保留 | latest 10 tool calls and `64000` tool-result tokens | Protect recent history before reclamation. / 回收前保护最近 10 次工具调用与 `64000` 工具结果 token。 |
 | History minimum reclaim / History 最少回收 | `96000` tokens | Avoid a history operation that reclaims too little. / 避免回收量过小的 History 操作。 |
 | Prefix policy | `pressure-break` | Select the pressure-oriented prefix decision path. / 选择面向压力的前缀决策路径。 |
 | TailTrim | disabled; threshold `700000` tokens | Remains off unless enabled; its threshold is used after opt-in. / 未启用时保持关闭；启用后采用此阈值。 |

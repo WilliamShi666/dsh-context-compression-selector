@@ -30,12 +30,21 @@ export interface CustomCompressionBudget {
   target: number
 }
 
-/** Custom History gate and recent working-set protection. */
-export interface CustomHistoryPolicy {
+/** Legacy Custom History gate and turn/token working-set protection. */
+export interface LegacyCustomHistoryPolicy {
   enabled: boolean
   trigger: number
   keepRecentTurns: number
   keepRecent: number
+  minReclaim: number
+}
+
+/** Custom History gate and recent tool-call/token working-set protection. */
+export interface CustomHistoryPolicy {
+  enabled: boolean
+  trigger: number
+  keepRecentToolCalls: number
+  keepRecentTokens: number
   minReclaim: number
 }
 
@@ -46,27 +55,33 @@ export interface CustomTailTrimPolicy {
 }
 
 /** Common user-authored Custom stages shared by persisted policy versions. */
-interface CustomCompressionPolicyFields {
+interface CustomCompressionPolicyFields<HistoryPolicy> {
   unit: CustomCompressionUnit
   fresh: CustomCompressionBudget
   aggregate: CustomCompressionBudget
-  history: CustomHistoryPolicy
+  history: HistoryPolicy
   prefixPolicy: CustomPrefixPolicy
 }
 
 /** Legacy R4 Custom policy, accepted without migration. */
-export interface CustomCompressionPolicyV1 extends CustomCompressionPolicyFields {
+export interface CustomCompressionPolicyV1 extends CustomCompressionPolicyFields<LegacyCustomHistoryPolicy> {
   version: 1
 }
 
 /** R5 Custom policy with an explicit default-off TailTrim stage. */
-export interface CustomCompressionPolicyV2 extends CustomCompressionPolicyFields {
+export interface CustomCompressionPolicyV2 extends CustomCompressionPolicyFields<LegacyCustomHistoryPolicy> {
   version: 2
   tailTrim: CustomTailTrimPolicy
 }
 
+/** Custom policy with tool-call working-set protection. */
+export interface CustomCompressionPolicyV3 extends CustomCompressionPolicyFields<CustomHistoryPolicy> {
+  version: 3
+  tailTrim: CustomTailTrimPolicy
+}
+
 /** Strict persisted Custom policy union. */
-export type CustomCompressionPolicy = CustomCompressionPolicyV1 | CustomCompressionPolicyV2
+export type CustomCompressionPolicy = CustomCompressionPolicyV1 | CustomCompressionPolicyV2 | CustomCompressionPolicyV3
 
 /** Durable global preference exposed through `ctx.settings`. */
 export interface ContextCompressionSettings {
@@ -98,9 +113,9 @@ export interface ToolResultPruneConfig {
   aggregateTargetTokens?: number
   /** Total live tool-result tokens that permit historical aging. Profile default when omitted. */
   historyTriggerTokens?: number
-  /** Recent complete user turns protected from historical aging. Profile default when omitted. */
-  historyKeepRecentTurns?: number
-  /** Recent tool-result token working set protected in addition to turns. Profile default when omitted. */
+  /** Recent completed agent tool calls protected from historical aging. Profile default when omitted. */
+  historyKeepRecentToolCalls?: number
+  /** Recent tool-result token tail protected in addition to tool calls. Profile default when omitted. */
   historyKeepRecentTokens?: number
   /** Minimum reclaim required before historical aging is worth a cache break. Profile default when omitted. */
   historyMinReclaimTokens?: number
@@ -119,10 +134,10 @@ export interface CompressionPolicy {
   readonly aggregateTriggerTokens: number
   readonly aggregateTargetTokens: number
   readonly historyTriggerTokens: number
-  readonly historyKeepRecentTurns: number
+  readonly historyKeepRecentToolCalls: number
   readonly historyKeepRecentTokens: number
   readonly historyMinReclaimTokens: number
-  /** Present only for Custom v2; standard profiles and Custom v1 carry no TailTrim policy. */
+  /** Present for Custom v3; standard profiles and legacy Custom policies carry no TailTrim policy. */
   readonly tailTrim?: {
     readonly enabled: boolean
     readonly triggerTokens: number
@@ -141,7 +156,7 @@ export interface ResolvedConfig {
   readonly aggregateTriggerTokens?: number
   readonly aggregateTargetTokens?: number
   readonly historyTriggerTokens?: number
-  readonly historyKeepRecentTurns?: number
+  readonly historyKeepRecentToolCalls?: number
   readonly historyKeepRecentTokens?: number
   readonly historyMinReclaimTokens?: number
 }
