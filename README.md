@@ -2,7 +2,7 @@
 
 > An auditable tool-result context-compression selector for DeepSeek Harness.
 
-[Chinese documentation](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
+[Chinese documentation](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!IMPORTANT]
 > This project currently supports **DeepSeek models only**. Its lossless measurement and lossy tool-result compression depend on the bundled official DeepSeek tokenizer. The exact supported model IDs in this release are `deepseek-v4-flash` and `deepseek-v4-pro`. `deepseek-v4-flash-vision-exp` is **not supported**; other DeepSeek Harness models, including non-DeepSeek providers, fail open and retain their original tool results.
@@ -29,7 +29,7 @@ Choose a compression profile from DeepSeek Harness settings. Profile settings ar
 
 This is an advanced plugin. It is not designed to be friendly to most users without background knowledge of agent context, tool-result compression, context windows, prompt caching, and the difference between deterministic tool-result compression and model-driven auto-compaction.
 
-If those terms are unfamiliar, start with the companion [interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector). It explains the mechanisms, profiles, trade-offs, and practical usage before you change compression settings.
+If those terms are unfamiliar, start with the companion [interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english). It explains the mechanisms, profiles, trade-offs, and practical usage before you change compression settings.
 
 ## Model support and safety
 

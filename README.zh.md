@@ -2,7 +2,7 @@
 
 > 面向 DeepSeek Harness 的、可审计的工具结果上下文压缩选择器。
 
-[English README](README.md) · [交互式课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
+[English README](README.md) · [English courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!IMPORTANT]
 > 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-v4-flash` 和 `deepseek-v4-pro`。`deepseek-v4-flash-vision-exp` **不受支持**；其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
@@ -29,7 +29,7 @@
 
 这是一个高级插件。对于不了解 Agent 上下文、工具结果压缩、上下文窗口、Prompt Cache，以及“确定性工具结果压缩”和“模型驱动 Auto Compact”区别的大多数用户而言，它并不友好。
 
-若这些概念还不熟悉，建议先阅读配套的[交互式课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector)。课件会先解释各机制、Profile、取舍和使用方法，再去修改压缩设置。
+若这些概念还不熟悉，建议先阅读配套的[中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文)。课件会先解释各机制、Profile、取舍和使用方法，再去修改压缩设置。
 
 ## 模型支持与安全边界
 
