@@ -2,7 +2,7 @@
 
 > An auditable tool-result context-compression selector for DeepSeek Harness.
 
-[Chinese documentation](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
+[中文说明](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!IMPORTANT]
 > This project currently supports **DeepSeek models only**. Its lossless measurement and lossy tool-result compression depend on the bundled official DeepSeek tokenizer. The exact supported model IDs in this release are `deepseek-v4-flash` and `deepseek-v4-pro`. `deepseek-v4-flash-vision-exp` is **not supported**; other DeepSeek Harness models, including non-DeepSeek providers, fail open and retain their original tool results.
