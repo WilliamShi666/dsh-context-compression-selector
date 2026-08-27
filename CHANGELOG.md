@@ -2,6 +2,18 @@
 
 All notable changes use this file. The project follows semantic versioning after `0.1.0`.
 
+## 0.1.0-beta.2 - 2026-08-28
+
+### Fixed
+
+- Resolve the official DeepSeek V4 Flash tokenizer route so Fresh and Aggregate can evaluate tool results for the supported V4 models.
+- Run Cache Strict History at the real request boundary once its configured capacity-pressure condition is met; trigger the capacity condition at 70% routed-context utilization.
+- Disable Harness-native head/middle/tail tool-result pruning whenever a selector profile is active, leaving the selector as the sole tool-result compactor.
+
+### Changed
+
+- Protect the newest 10 agent tool calls and a 64,000-token tool-result tail window before History/microcompact rewrites older results.
+
 ## 0.1.0-beta.1 - Unreleased
 
 ### Added

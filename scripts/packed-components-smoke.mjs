@@ -4,6 +4,8 @@ import { dirname, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
+import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import LlmRuntime, {
   CallId,
@@ -317,10 +319,11 @@ try {
   const activeCapacity = ctx.sessions.create(SessionId('packed-history-capacity-active'))
   appendToolTurn(activeCapacity, 1, 'packed capacity active '.repeat(600), true)
   appendToolTurn(activeCapacity, 2, 'packed newest protected result', true)
+  const activeCapacityWindow = Math.floor(ctx.tokenMeter.measure(activeCapacity).totalTokens / 0.75)
   activeCapacity.append('request/context', {
     provider: 'deepseek',
     model: MODEL,
-    contextWindow: 100,
+    contextWindow: activeCapacityWindow,
   })
   activeCapacity.append('turn/start', { turn: 3 })
   ctx.toolResultPruner.pruneSession(activeCapacity, { stage: 'pressure' })
@@ -334,6 +337,55 @@ try {
     && Number.isSafeInteger(capacityRewrite.tokensAfter)
     && capacityRewrite.tokensBefore > capacityRewrite.tokensAfter,
   'installed History did not commit exact capacity-pressure evidence')
+
+  const boundaryCtx = new Context()
+  try {
+    await mountAgentLoopTestDependencies(boundaryCtx)
+    await boundaryCtx.plugin(AgentLoop, { agents: [] })
+    await boundaryCtx.plugin(TokenMeter)
+    const boundaryAudit = captureAudit(boundaryCtx)
+    boundaryCtx.llm.registerAdapter(
+      ['deepseek'],
+      new NativeSummaryAdapter(['packed Cache Strict pressure pass complete'], 100),
+    )
+    await boundaryCtx.plugin(Runtime.default, {
+      profile: 'cache-strict',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 40,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const boundaryAgent = boundaryCtx.agentLoop.create(
+      SessionId('packed-history-capacity-request-boundary'),
+      { provider: 'deepseek', model: MODEL },
+    )
+    const boundarySession = boundaryAgent.session
+    appendToolTurn(boundarySession, 1, 'packed old capacity-pressure evidence '.repeat(600), true)
+    appendToolTurn(boundarySession, 2, 'packed newest protected result', true)
+    boundarySession.append('request/context', {
+      provider: 'deepseek',
+      model: MODEL,
+      contextWindow: 100,
+    })
+    boundaryAgent.followup(createUserMessage({
+      content: [{ type: 'text', text: 'run packed Cache Strict pressure pass' }],
+      source: { kind: 'user' },
+    }))
+    await boundaryAgent.whenIdle()
+    const boundaryRewrite = boundaryAudit.find(record => record.kind === 'rewrite'
+      && record.sessionId === String(boundarySession.id)
+      && record.component === 'history')
+    assert(boundaryRewrite?.stage === 'pressure'
+      && boundaryRewrite.historyMode === 'capacity-pressure'
+      && boundaryRewrite.tokensBefore > boundaryRewrite.tokensAfter,
+    'installed Cache Strict did not schedule History from the real request boundary')
+  } finally {
+    await boundaryCtx.fiber.dispose()
+  }
 
   const beforeNative = ctx.tokenMeter.measure(session).totalTokens
   assert(beforeNative > 2, 'installed pipeline has no Native pressure')
@@ -440,6 +492,7 @@ try {
         tokensBefore: capacityRewrite.tokensBefore,
         tokensAfter: capacityRewrite.tokensAfter,
       },
+      capacityPressureRequestBoundary: 'scheduled-history-rewrite',
     },
     rewriteEvidence: ['fresh', 'aggregate', 'history', 'tail-trim'].map(component => {
       const record = pipelineRewrites.find(candidate => candidate.component === component)

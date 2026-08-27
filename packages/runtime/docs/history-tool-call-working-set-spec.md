@@ -53,7 +53,7 @@ History 才会规划 microcompact。Fresh、Aggregate、Native 和 TailTrim 的�
 | `off` | disabled | 不触发 | 10 次调用 + `64000` token；无运行效果 | 无；保持关闭。 |
 | `native` | disabled | 不触发；Native 头-中-尾裁剪仍独立 | 10 次调用 + `64000` token；无运行效果 | 无；不得把 History 偷偷加入 Native。 |
 | `balanced` | `routine` | `500000 / 96000` tokens，保持不变 | 最近 10 次调用 + `64000` token 尾窗 | 作为基线。若保护集导致频繁无法达到 96k 回收，再只评估提高 trigger 或降低 min-reclaim 之一。 |
-| `cache-strict` | `capacity-pressure` | `600000 / 128000` tokens，保持不变 | 最近 10 次调用 + `64000` token 尾窗 | 不降低 trigger；它以稳定已发送前缀为优先。只在已确认容量压力时改写。 |
+| `cache-strict` | `capacity-pressure` | `600000 / 128000` tokens，保持不变；路由上下文利用率至少 `70%` | 最近 10 次调用 + `64000` token 尾窗 | 不降低 trigger；它以稳定已发送前缀为优先。只在已确认容量压力时改写。 |
 | `savings` | `routine` | `400000 / 128000` tokens | 最近 10 次调用 + `64000` token 尾窗 | 将 trigger 从 `450000` 提前到 `400000`，以更早回收旧工具结果；首版保留 `128000` 最小回收量，避免用一次很小的前缀改写交换缓存损失。 |
 | `adaptive` | `adaptive`，容量压力可覆盖 | `500000 / 96000` tokens，保持不变 | 最近 10 次调用 + `64000` token 尾窗 | 先让现有成本判断评估新的候选批次；没有连续官方 usage/价格证据时不调低门槛。 |
 | `custom` | `enabled + prefixPolicy` 决定 routine 或 capacity-pressure | 保留用户的 trigger/min-reclaim | 默认 10 次调用 + `64000` token 尾窗 | Custom v3 允许用户显式改两个保护值；默认/重置值为 10 与 `64000`。 |

@@ -521,16 +521,67 @@ describe('standalone runtime on published Harness APIs', () => {
     const aboveCapacityGate = Session.create(SessionId('public-history-capacity-active'))
     appendToolTurn(aboveCapacityGate, 1, 'capacity active evidence '.repeat(600), true)
     appendToolTurn(aboveCapacityGate, 2, 'newest protected result', true)
+    const capacityWindow = Math.floor(measureForCompaction(ctx, aboveCapacityGate).totalTokens / 0.75)
     aboveCapacityGate.append('request/context', {
       provider: 'deepseek',
       model: MODEL,
-      contextWindow: 100,
+      contextWindow: capacityWindow,
     })
     aboveCapacityGate.append('turn/start', { turn: 3 })
     ctx.toolResultPruner.pruneSession(aboveCapacityGate, { stage: 'pressure' })
 
     expect(rewrites(audit.records())).toContainEqual(expect.objectContaining({
       sessionId: String(aboveCapacityGate.id),
+      component: 'history',
+      stage: 'pressure',
+      historyMode: 'capacity-pressure',
+    }))
+  })
+
+  it('runs Cache Strict capacity-pressure History through the real agent pre-step boundary', async () => {
+    const ctx = new Context()
+    activeContexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(TokenMeter)
+    const audit = captureAudit(ctx)
+    ctx.llm.registerAdapter(
+      ['deepseek'],
+      new NativeSummaryAdapter(['Cache Strict pressure pass complete'], 100),
+    )
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'cache-strict',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 40,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+
+    const agent = ctx.agentLoop.create(SessionId('public-history-capacity-request-boundary'), {
+      provider: 'deepseek',
+      model: MODEL,
+    })
+    const { session } = agent
+    appendToolTurn(session, 1, 'old capacity-pressure evidence '.repeat(600), true)
+    appendToolTurn(session, 2, 'newest protected result', true)
+    session.append('request/context', {
+      provider: 'deepseek',
+      model: MODEL,
+      contextWindow: 100,
+    })
+
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: 'run Cache Strict pressure pass' }],
+      source: { kind: 'user' },
+    }))
+    await agent.whenIdle()
+
+    expect(rewrites(audit.records())).toContainEqual(expect.objectContaining({
+      sessionId: String(session.id),
       component: 'history',
       stage: 'pressure',
       historyMode: 'capacity-pressure',

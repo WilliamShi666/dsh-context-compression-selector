@@ -21,6 +21,7 @@ const officialHostPackages = [
   '@deepseek-ai/cordis-plugin-loader@1.0.2',
   '@deepseek-ai/dsh-agent@0.1.1-rc.2',
   '@deepseek-ai/dsh-agent-loop@0.1.1-rc.2',
+  '@deepseek-ai/dsh-agent-loop-testkit@0.1.1-rc.2',
   '@deepseek-ai/dsh-agent-presets@0.1.1-rc.2',
   '@deepseek-ai/dsh-commands@0.1.1-rc.2',
   '@deepseek-ai/dsh-command-compact@0.1.1-rc.2',

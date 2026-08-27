@@ -112,7 +112,7 @@ In this project, a **compression profile** is not a Harness preset. It is the se
 | Off | disabled | disabled | disabled | disabled | No selector-driven tool-result compression. |
 | Native | disabled | disabled | enabled, `4096 → 2048` | disabled | Preserves the original single native-style tool-result approach. |
 | Balanced | enabled, `8192 → 3072` / `32768 → 12288` | routine at `500000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `96000` | disabled | Everyday balance of preservation and context control. |
-| Cache Strict | enabled, same Fresh/Aggregate values as Balanced | capacity-pressure only at `600000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Favors cache-prefix stability; delays history aging until real pressure. |
+| Cache Strict | enabled, same Fresh/Aggregate values as Balanced | capacity-pressure only at `600000` and 70% routed-context utilization; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Favors cache-prefix stability; delays history aging until real pressure. |
 | Savings | enabled, `4096 → 1536` / `16384 → 4096` | routine at `400000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `128000` | disabled | Earlier and stronger reduction for lower context cost. |
 | Adaptive | enabled, same Fresh/Aggregate values as Balanced | adaptive at `500000`; retain 10 calls + `64000` tool-result tokens; reclaim at least `96000` | disabled | Uses the existing adaptive policy model; it is not a claim of exact future price optimization. |
 | Custom | individually configurable | individually configurable | disabled | Custom-only, off by default | Full user control; the current default is shown below. |

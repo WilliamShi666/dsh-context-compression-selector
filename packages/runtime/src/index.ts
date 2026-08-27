@@ -156,6 +156,8 @@ interface PlannedReplacement {
 }
 
 const RICH_BLOCK_PRESSURE_COST = 256
+/** Routed-context utilization required before capacity-pressure History may age sent history. */
+const CAPACITY_PRESSURE_RATIO = 0.7
 
 /** Mixed deterministic selector behind the existing `ctx.toolResultPruner` seam. */
 export class ToolResultPruner extends Service {
@@ -495,8 +497,7 @@ export class ToolResultPruner extends Service {
     if (policy === undefined) return
     const capacity = contextWindowTokens === undefined ? {} : { contextWindowTokens }
     this.pruneSession(session, { stage: 'fresh', freshTurn: turn, freshStep: step, ...capacity })
-    if (policy.historyMode === 'routine' || policy.historyMode === 'adaptive'
-      || policy.tailTrim?.enabled === true) {
+    if (policy.historyMode !== 'disabled' || policy.tailTrim?.enabled === true) {
       this.pruneSession(session, { stage: 'pressure', ...capacity })
     }
   }
@@ -529,7 +530,7 @@ export class ToolResultPruner extends Service {
       || contextWindow === undefined
       || !Number.isSafeInteger(contextWindow)
       || contextWindow <= 0) return false
-    return view.totalTokens >= Math.floor(contextWindow * 0.8)
+    return view.totalTokens >= Math.floor(contextWindow * CAPACITY_PRESSURE_RATIO)
   }
 
   /** Emit one bounded, independently correlatable postflight cost diagnostic per completed attempt. */
@@ -1560,7 +1561,7 @@ export class ToolResultPruner extends Service {
     if (!allowed) {
       const capacity = session.requestContext()?.contextWindow
       const capacityTrigger = Number.isSafeInteger(capacity) && capacity !== undefined && capacity > 0
-        ? Math.floor(capacity * 0.8)
+        ? Math.floor(capacity * CAPACITY_PRESSURE_RATIO)
         : undefined
       this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
         policy.historyMode === 'capacity-pressure'
