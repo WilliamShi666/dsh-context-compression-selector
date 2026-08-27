@@ -14,7 +14,7 @@ All notable changes use this file. The project follows semantic versioning after
 
 - Protect the newest 10 agent tool calls and a 64,000-token tool-result tail window before History/microcompact rewrites older results.
 
-## 0.1.0-beta.1 - Unreleased
+## 0.1.0-beta.1 - 2026-08-27
 
 ### Added
 

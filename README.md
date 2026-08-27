@@ -5,9 +5,9 @@
 
 ## Status / 状态
 
-Source code is public on GitHub and the package is available on NPM. The current and only published release is `0.1.0-beta.1`; it is also the registry's default `latest` release, so users can install it without writing a tag.
+Source code is public on GitHub and the package is available on NPM. The newest release is `0.1.0-beta.2` on the `beta` channel; the registry's default `latest` remains `0.1.0-beta.1`.
 
-源码已公开到 GitHub，插件包也已发布到 NPM。当前唯一的已发布版本是 `0.1.0-beta.1`；它同时是 registry 的默认 `latest` 版本，因此用户安装时无需额外写 tag。
+源码已公开到 GitHub，插件包也已发布到 NPM。最新版本是 `beta` 通道上的 `0.1.0-beta.2`；registry 的默认 `latest` 仍为 `0.1.0-beta.1`。
 
 This is an unofficial community plugin for DeepSeek Harness. It extends Harness through its public plugin/profile interfaces, without patching Harness core source code.
 
@@ -274,6 +274,6 @@ MIT。详见 [LICENSE](./LICENSE)。
 
 ---
 
-**Release note / 发布说明：** The current default release is `0.1.0-beta.1`. Future updates will use new immutable NPM version numbers; published versions are never overwritten.
+**Release note / 发布说明：** The newest beta release is `0.1.0-beta.2`; the default `latest` release remains `0.1.0-beta.1`. Future updates will use new immutable NPM version numbers; published versions are never overwritten.
 
-**发布说明：** 当前默认版本为 `0.1.0-beta.1`。之后的更新会使用新的、不可变的 NPM 版本号；已发布版本不会被覆盖。
+**发布说明：** 最新 beta 版本为 `0.1.0-beta.2`，默认 `latest` 版本仍为 `0.1.0-beta.1`。之后的更新会使用新的、不可变的 NPM 版本号；已发布版本不会被覆盖。

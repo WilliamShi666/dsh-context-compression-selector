@@ -17,7 +17,7 @@
 
 | 插件版本 | 已验证 Harness | Node.js |
 |---|---|---|
-| `0.1.0-beta.1` | `dsh-v0.1.1-rc.2` / 公开包 `0.1.1-rc.2` | `^22.19.0` 或 `>=24` |
+| `0.1.0-beta.2` | `dsh-v0.1.1-rc.2` / 公开包 `0.1.1-rc.2` | `^22.19.0` 或 `>=24` |
 
 暂不声称兼容其他 Harness 版本。有损改写目前只对 bundled tokenizer 明确验证过的模型 id 开放：`deepseek-v4-flash`、`deepseek-v4-pro`。未知模型 fail-open，保留原上下文。
 
