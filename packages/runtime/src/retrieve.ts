@@ -18,6 +18,7 @@ import {
   validatePublishedTailTrim,
   type PublishedTailTrim,
 } from './tail-trim.ts'
+import { sessionEvents } from './session-events.ts'
 
 export const name = 'context-compression-retrieve'
 export const inject = ['tools', 'systemPrompt']
@@ -104,7 +105,7 @@ export function installContextCompressionRetrieve(ctx: Context, config: Config =
         ))
       }
       const seq = Number(match?.[2])
-      const event = exec.agent.session.events[seq]
+      const event = sessionEvents(exec.agent.session)[seq]
       if (event?.type !== 'tool/result') {
         throw new Error(`context_compression_retrieve: event ${String(seq)} is not a tool/result in the current session`)
       }

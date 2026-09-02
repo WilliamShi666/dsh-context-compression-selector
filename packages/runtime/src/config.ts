@@ -27,8 +27,8 @@ export const PRUNE_MARKER = '\n\n[... tool result middle pruned ...]\n\n'
 
 /**
  * The one Auto Compact threshold contract shared by the settings UI, the
- * persisted settings schema, and the runtime resolver. `70 / 80 / 85` are
- * quick-fill suggestions in the UI only; every integer in the range is valid.
+ * persisted settings schema, and the runtime resolver. Every integer in the
+ * range is valid and entered directly in the UI.
  */
 export const AUTO_COMPACT_THRESHOLD_LIMITS = deepFreeze({
   min: 50,

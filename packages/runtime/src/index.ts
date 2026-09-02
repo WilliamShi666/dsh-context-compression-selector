@@ -24,6 +24,7 @@ import type {
   TokenCount,
 } from './measurement.ts'
 import { measureForCompaction } from './measurement.ts'
+import { sessionEvents } from './session-events.ts'
 import { deepSeekV4TokenizerForModel } from './deepseek-v4-tokenizer.ts'
 import { countExactCanonicalTextFields } from './token-count.ts'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -848,7 +849,7 @@ export class ToolResultPruner extends Service {
 
   private latestCompletedToolStep(session: Session, turn: number): number | undefined {
     let latest: number | undefined
-    for (const event of session.events) {
+    for (const event of sessionEvents(session)) {
       if (event.type === 'step/end' && event.data.turn === turn) latest = event.data.step
     }
     return latest
@@ -992,8 +993,9 @@ export class ToolResultPruner extends Service {
   }
 
   private snapshot(session: Session, view: CompactionTokenView): SnapshotCandidate[] {
+    const events = sessionEvents(session)
     const calls = new Map<string, ToolCallInfo>()
-    for (const event of session.events) {
+    for (const event of events) {
       if (event.type === 'tool/call') {
         calls.set(event.data.callId, { name: event.data.name, arguments: event.data.arguments })
       }
@@ -1002,7 +1004,7 @@ export class ToolResultPruner extends Service {
     const measured = new Map(view.measuredNodes.map(node => [node.seq, node.count]))
     const projectionPrices = new Map(view.nodes.map(node => [node.seq, node.tokens]))
     for (const seq of [...session.surface.nodes]) {
-      const event = session.events[seq]
+      const event = events[seq]
       if (event?.type !== 'tool/result') continue
       const shadowedHeuristicTokenCount = projectionPrices.get(seq)
       if (shadowedHeuristicTokenCount === undefined) {
@@ -1388,6 +1390,7 @@ export class ToolResultPruner extends Service {
   ): void {
     const tailTrim = policy.tailTrim
     if (tailTrim?.enabled !== true) return
+    const events = sessionEvents(session)
     if (view.currentSurface.kind !== 'exact-tokenizer'
       || view.currentSurface.tokens <= tailTrim.triggerTokens) {
       if (view.currentSurface.kind !== 'exact-tokenizer') this.warnExactUnavailable(session, view, 'tailtrim')
@@ -1435,12 +1438,12 @@ export class ToolResultPruner extends Service {
     const heuristic = new Map(view.nodes.map(node => [node.seq, node.tokens]))
     const completedTurns = new Set<number>()
     const completedSteps = new Set<string>()
-    for (const event of session.events) {
+    for (const event of events) {
       if (event.type === 'turn/end') completedTurns.add(event.data.turn)
       else if (event.type === 'step/end') completedSteps.add(`${String(event.data.turn)}:${String(event.data.step)}`)
     }
     const firstCompletedSurfaceTurn = session.surface.nodes
-      .map(seq => session.events[seq])
+      .map(seq => events[seq])
       .filter((event): event is SessionEvent<'assistant/message'> | SessionEvent<'tool/result'> =>
         (event?.type === 'assistant/message' || event?.type === 'tool/result')
           && completedTurns.has(event.data.turn))
@@ -1452,7 +1455,7 @@ export class ToolResultPruner extends Service {
     for (let index = 0; index < nodes.length; index++) {
       const assistantSeq = nodes[index]
       if (assistantSeq === undefined) continue
-      const assistant = session.events[assistantSeq]
+      const assistant = events[assistantSeq]
       if (assistant?.type !== 'assistant/message'
         || assistant.data.interrupted === true
         || assistant.data.message.content.length === 0
@@ -1466,7 +1469,7 @@ export class ToolResultPruner extends Service {
       if (new Set(callIds).size !== callIds.length) continue
       const resultSeqs = nodes.slice(index + 1, index + 1 + calls.length)
       if (resultSeqs.length !== calls.length || resultSeqs.some(seq => protectedResults.has(seq))) continue
-      const results = resultSeqs.map(seq => session.events[seq])
+      const results = resultSeqs.map(seq => events[seq])
       if (results.some((event): boolean => {
         if (event?.type !== 'tool/result'
           || event.data.turn !== assistant.data.turn || event.data.step !== assistant.data.step
@@ -1477,7 +1480,7 @@ export class ToolResultPruner extends Service {
         // would silently delete them from the active context.
         return block.content.some(contentBlock => contentBlock.type !== 'text')
       })) continue
-      const next = session.events[nodes[index + 1 + calls.length] ?? -1]
+      const next = events[nodes[index + 1 + calls.length] ?? -1]
       if (next?.type === 'tool/result'
         && next.data.turn === assistant.data.turn
         && next.data.step === assistant.data.step) continue
@@ -1496,7 +1499,7 @@ export class ToolResultPruner extends Service {
       if (exactCounts.some(count => count.tokenizerId !== surfaceCount.tokenizerId
         || count.tokenizerRevision !== surfaceCount.tokenizerRevision)) continue
       const tokensBefore = exactCounts.reduce((sum, count) => sum + count.tokens, 0)
-      const manifestSeq = session.events.length
+      const manifestSeq = events.length
       const ref = tailTrimRef(String(session.id), manifestSeq)
       const stub = tailTrimStub(ref, calls.map(call => call.name), sourceEventSeqs)
       if (stub === null) continue
@@ -1579,6 +1582,7 @@ export class ToolResultPruner extends Service {
   }
 
   private uniqueAppendRoot(session: Session, seq: number): number | null {
+    const events = sessionEvents(session)
     const pending: Array<{ seq: number; depth: number }> = [{ seq, depth: 0 }]
     const visited = new Set<number>()
     const roots = new Set<number>()
@@ -1587,7 +1591,7 @@ export class ToolResultPruner extends Service {
       if (next === undefined || next.depth > 64 || visited.has(next.seq)) continue
       visited.add(next.seq)
       if (visited.size > 64) return null
-      const event = session.events[next.seq]
+      const event = events[next.seq]
       if (event === undefined || (event.type !== 'assistant/message' && event.type !== 'tool/result')) return null
       if (event.surfaceOp === 'append') roots.add(event.seq)
       else if (typeof event.surfaceOp === 'object') {
@@ -1926,7 +1930,7 @@ export class ToolResultPruner extends Service {
   /** Surface replacements are durable turn work; reject before writing the audit half. */
   private hasOpenTurn(session: Session): boolean {
     let open = false
-    for (const event of session.events) {
+    for (const event of sessionEvents(session)) {
       if (event.type === 'turn/start') open = true
       else if (event.type === 'turn/end') open = false
     }
@@ -1934,11 +1938,12 @@ export class ToolResultPruner extends Service {
   }
 
   private rootToolResultSeq(session: Session, seq: number): number {
+    const events = sessionEvents(session)
     let current = seq
     const seen = new Set<number>()
     while (!seen.has(current)) {
       seen.add(current)
-      const event = session.events[current]
+      const event = events[current]
       if (event?.type !== 'tool/result' || typeof event.surfaceOp !== 'object') return current
       const previous = event.sourceEventSeqs?.[0]
       if (previous === undefined) return current

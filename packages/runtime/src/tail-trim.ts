@@ -3,6 +3,7 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { sessionEvents } from './session-events.ts'
 
 const TAIL_TRIM_REF_PATTERN = /^session:\/\/([^/]+)\/tailtrim\/(\d+)$/
 const MAX_ROOTS = 64
@@ -63,14 +64,15 @@ export function validatePublishedTailTrim(
   session: Session,
   manifestSeq: number,
 ): PublishedTailTrim | null {
-  const manifest = session.events[manifestSeq]
+  const events = sessionEvents(session)
+  const manifest = events[manifestSeq]
   if (manifest?.type !== 'compaction/prune'
     || manifest.data.shadowedSeqs.length < 2
     || manifest.data.shadowedSeqs.length > MAX_ROOTS
     || manifest.data.shadowedSeqs[0] !== manifest.data.shadowedRange.start
     || manifest.data.shadowedSeqs.at(-1) !== manifest.data.shadowedRange.end
     || new Set(manifest.data.shadowedSeqs).size !== manifest.data.shadowedSeqs.length) return null
-  const replacement = session.events[manifestSeq + 1]
+  const replacement = events[manifestSeq + 1]
   if (replacement?.type !== 'user/message'
     || replacement.seq !== manifest.seq + 1
     || replacement.data.source.kind !== 'plugin'
@@ -90,7 +92,7 @@ export function validatePublishedTailTrim(
   if (tracedRoots.some(root => root === null)) return null
   const sourceEventSeqs = tracedRoots as number[]
   if (new Set(sourceEventSeqs).size !== sourceEventSeqs.length) return null
-  const roots = sourceEventSeqs.map(seq => session.events[seq])
+  const roots = sourceEventSeqs.map(seq => events[seq])
   if (roots.some((event): event is undefined => event === undefined)) return null
   const typedRoots = roots as SessionEvent[]
   if (!validRootGroup(typedRoots, manifestSeq)) return null
@@ -114,6 +116,7 @@ export function validatePublishedTailTrim(
 }
 
 function uniqueAppendRoot(session: Session, seq: number, beforeSeq: number): number | null {
+  const events = sessionEvents(session)
   const pending: Array<{ readonly seq: number; readonly depth: number }> = [{ seq, depth: 0 }]
   const visited = new Set<number>()
   const roots = new Set<number>()
@@ -123,7 +126,7 @@ function uniqueAppendRoot(session: Session, seq: number, beforeSeq: number): num
     if (!Number.isSafeInteger(next.seq) || next.seq < 0 || next.seq >= beforeSeq) return null
     visited.add(next.seq)
     if (visited.size > MAX_ROOTS) return null
-    const event = session.events[next.seq]
+    const event = events[next.seq]
     if (event === undefined || (event.type !== 'assistant/message' && event.type !== 'tool/result')) return null
     if (event.surfaceOp === 'append') roots.add(event.seq)
     else if (typeof event.surfaceOp === 'object') {

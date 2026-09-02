@@ -5,6 +5,7 @@ import type { InvariantFailure, InvariantInstaller } from '@deepseek-ai/dsh-inva
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-compaction'
 import { validatePublishedTailTrim } from './tail-trim.ts'
+import { sessionEvents } from './session-events.ts'
 
 const PACKAGE_NAME = 'dsh-context-compression-selector-runtime'
 
@@ -58,7 +59,7 @@ function validateCompanion(
 /** Validate a replayed log and return its only legal unresolved tail. */
 function seedPending(session: Session, fail: InvariantFailure): PruneEvent | undefined {
   let pending: PruneEvent | undefined
-  for (const event of session.events) {
+  for (const event of sessionEvents(session)) {
     if (pending !== undefined) {
       // A prune whose synchronous companion never committed is an inert,
       // aborted publication. It must not brick a restored Session. A surface

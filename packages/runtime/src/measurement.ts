@@ -15,6 +15,7 @@ import {
   estimateDeepSeekVisionImageTokens,
 } from './deepseek-v4-vision-tokens.ts'
 import { unavailableTokenCount } from './token-count.ts'
+import { sessionEvents } from './session-events.ts'
 import type {
   CanonicalTextTokenCounter,
   ExactTokenizerTokenCount,
@@ -111,8 +112,9 @@ export function measureForCompaction(ctx: Context, session: Session): Compaction
   const measurement = ctx.tokenMeter.measure(session, header)
   const target = header?.config
   const counter = bindCounter(target?.provider, target?.model)
+  const events = sessionEvents(session)
   const measuredNodes = measurement.nodes.map((node): MeasuredTokenSurfaceNode => {
-    const event = session.events[node.seq]
+    const event = events[node.seq]
     if (event === undefined) {
       return { seq: node.seq, count: unavailableTokenCount(`surface node ${String(node.seq)} is missing`) }
     }
