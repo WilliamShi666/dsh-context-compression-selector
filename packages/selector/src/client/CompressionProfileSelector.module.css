@@ -163,46 +163,6 @@
   font-weight: 600;
 }
 
-.autoCompactControls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.autoCompactSlider {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 240px;
-  min-width: 200px;
-}
-
-.autoCompactSliderLabel {
-  font-size: 12px;
-  opacity: 0.8;
-}
-
-.autoCompactQuick {
-  display: flex;
-  gap: 8px;
-  margin: 12px 0 4px;
-}
-
-.autoCompactQuickButton {
-  min-width: 56px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(128, 128, 128, 0.5);
-  background: transparent;
-  cursor: pointer;
-}
-
-.autoCompactQuickButton[aria-pressed='true'] {
-  border-color: currentColor;
-  font-weight: 600;
-}
-
 .autoCompactRisk {
   margin: 8px 0 0;
   font-size: 12px;

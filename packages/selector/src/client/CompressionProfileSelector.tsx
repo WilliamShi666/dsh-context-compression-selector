@@ -248,12 +248,10 @@ interface AutoCompactThresholdControlsProps {
   t: (key: ContextCompressionLocaleKey) => string
 }
 
-const AUTO_COMPACT_QUICK_VALUES = [70, 80, 85] as const
-
 /**
  * The authoritative Auto Compact threshold editor for the context-compression
- * section. The number input, slider, and quick values share one draft and one
- * save path; values outside the recommended 70–85 band warn without blocking.
+ * section. A typed number input and its save path are kept deliberately simple;
+ * values outside the recommended 70–85 band warn without blocking.
  */
 function AutoCompactThresholdControls({ value, disabled, save, settle, t }: AutoCompactThresholdControlsProps) {
   const [draft, setDraft] = useState(String(value))
@@ -271,47 +269,19 @@ function AutoCompactThresholdControls({ value, disabled, save, settle, t }: Auto
     <section className={css.autoCompact} aria-labelledby="context-compression-autocompact-title">
       <h3 id="context-compression-autocompact-title" className={css.autoCompactTitle}>{t('autoCompact.title')}</h3>
       <p className={css.customNote}>{t('autoCompact.description')}</p>
-      <div className={css.autoCompactControls}>
-        <label className={css.field}>
-          <span>{t('autoCompact.inputLabel')}</span>
-          <input
-            type="number"
-            value={draft}
-            min={AUTO_COMPACT_THRESHOLD_LIMITS.min}
-            max={AUTO_COMPACT_THRESHOLD_LIMITS.max}
-            step={AUTO_COMPACT_THRESHOLD_LIMITS.step}
-            disabled={disabled}
-            aria-invalid={!valid}
-            onChange={(event) => { setDraft(event.currentTarget.value) }}
-          />
-        </label>
-        <label className={css.autoCompactSlider}>
-          <span className={css.autoCompactSliderLabel}>{t('autoCompact.sliderLabel')}</span>
-          <input
-            type="range"
-            value={valid ? draft : String(value)}
-            min={AUTO_COMPACT_THRESHOLD_LIMITS.min}
-            max={AUTO_COMPACT_THRESHOLD_LIMITS.max}
-            step={AUTO_COMPACT_THRESHOLD_LIMITS.step}
-            disabled={disabled}
-            onChange={(event) => { setDraft(event.currentTarget.value) }}
-          />
-        </label>
-      </div>
-      <div className={css.autoCompactQuick} role="group" aria-label={t('autoCompact.quick')}>
-        {AUTO_COMPACT_QUICK_VALUES.map(quick => (
-          <button
-            key={quick}
-            type="button"
-            className={css.autoCompactQuickButton}
-            aria-pressed={valid && parsed === quick}
-            disabled={disabled}
-            onClick={() => { setDraft(String(quick)) }}
-          >
-            {`${String(quick)}%`}
-          </button>
-        ))}
-      </div>
+      <label className={css.field}>
+        <span>{t('autoCompact.inputLabel')}</span>
+        <input
+          type="number"
+          value={draft}
+          min={AUTO_COMPACT_THRESHOLD_LIMITS.min}
+          max={AUTO_COMPACT_THRESHOLD_LIMITS.max}
+          step={AUTO_COMPACT_THRESHOLD_LIMITS.step}
+          disabled={disabled}
+          aria-invalid={!valid}
+          onChange={(event) => { setDraft(event.currentTarget.value) }}
+        />
+      </label>
       {risk === undefined ? null : (
         <div className={risk === 'autoCompact.invalid' ? css.error : css.autoCompactRisk} role={risk === 'autoCompact.invalid' ? 'alert' : 'note'}>
           {t(risk)}
