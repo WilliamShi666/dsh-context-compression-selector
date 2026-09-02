@@ -5,8 +5,10 @@ import { IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primi
 import type { ContextCompressionLocaleKey } from './locales.ts'
 import css from './CompressionProfileSelector.module.css'
 import {
+  AUTO_COMPACT_THRESHOLD_LIMITS,
   COMPRESSION_PROFILES,
   isCustomCompressionPolicy,
+  isValidAutoCompactThresholdPercent,
   type CompressionProfile,
   type CustomCompressionBudget,
   type CustomCompressionPolicy,
@@ -23,6 +25,7 @@ export interface CompressionSelectorInjected {
   select: (profile: CompressionProfile) => Promise<void>
   saveCustom: (custom: CustomCompressionPolicy) => Promise<void>
   resetCustom: () => Promise<void>
+  saveAutoCompact: (thresholdPercent: number) => Promise<void>
 }
 
 export type CompressionProfileSelectorProps =
@@ -36,7 +39,7 @@ export function ContextCompressionSettingsSection(props: CompressionProfileSelec
 }
 
 function SettingsCompressionProfileControls({
-  useCompression, useSessions, select, saveCustom, resetCustom, t,
+  useCompression, useSessions, select, saveCustom, resetCustom, saveAutoCompact, t,
 }: CompressionProfileSelectorProps) {
   const state = useCompression(snapshot => snapshot)
   const currentPreset = useSessions((sessions) => {
@@ -100,6 +103,13 @@ function SettingsCompressionProfileControls({
           })}
         </div>
       ) : <div className={css.unavailable} role="status">{t('status.minimalUnavailable')}</div>}
+      <AutoCompactThresholdControls
+        value={state.value?.autoCompact?.thresholdPercent ?? AUTO_COMPACT_THRESHOLD_LIMITS.default}
+        disabled={busy || !state.writable || !selectorAvailable}
+        save={saveAutoCompact}
+        settle={settle}
+        t={t}
+      />
       <div className={css.pricing}>{t('pricing.disclosure')}</div>
       {current !== 'custom' || draft === null || !selectorAvailable ? null : (
         <CustomPolicyEditor value={draft} disabled={busy || !state.writable} setValue={setDraft}
@@ -198,6 +208,9 @@ function CompressionProfileControls({
         </div>
       )}
       <div className={css.pricing}>{t('pricing.disclosure')}</div>
+      <div className={css.settingsHint}>
+        {t('autoCompact.summaryHint').replace('{percent}', String(state.value?.autoCompact?.thresholdPercent ?? AUTO_COMPACT_THRESHOLD_LIMITS.default))}
+      </div>
       {current !== 'custom' || showCustomEditor ? null : (
         <div className={css.settingsHint}>{t('custom.settingsHint')}</div>
       )}
@@ -224,6 +237,96 @@ function CompressionProfileControls({
       )}
       {saveError === null ? null : <div className={css.error} role="alert">{saveError}</div>}
     </div>
+  )
+}
+
+interface AutoCompactThresholdControlsProps {
+  value: number
+  disabled: boolean
+  save: (thresholdPercent: number) => Promise<void>
+  settle: (operation: () => Promise<void>) => void
+  t: (key: ContextCompressionLocaleKey) => string
+}
+
+const AUTO_COMPACT_QUICK_VALUES = [70, 80, 85] as const
+
+/**
+ * The authoritative Auto Compact threshold editor for the context-compression
+ * section. The number input, slider, and quick values share one draft and one
+ * save path; values outside the recommended 70–85 band warn without blocking.
+ */
+function AutoCompactThresholdControls({ value, disabled, save, settle, t }: AutoCompactThresholdControlsProps) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => { setDraft(String(value)) }, [value])
+  const parsed = Number(draft)
+  // Number inputs legally produce value-equivalent drafts such as '8e1';
+  // only the parsed value needs to be a valid threshold.
+  const valid = isValidAutoCompactThresholdPercent(parsed)
+  const risk = !valid
+    ? 'autoCompact.invalid'
+    : parsed < 70 ? 'autoCompact.riskLow'
+      : parsed > 85 ? 'autoCompact.riskHigh'
+        : undefined
+  return (
+    <section className={css.autoCompact} aria-labelledby="context-compression-autocompact-title">
+      <h3 id="context-compression-autocompact-title" className={css.autoCompactTitle}>{t('autoCompact.title')}</h3>
+      <p className={css.customNote}>{t('autoCompact.description')}</p>
+      <div className={css.autoCompactControls}>
+        <label className={css.field}>
+          <span>{t('autoCompact.inputLabel')}</span>
+          <input
+            type="number"
+            value={draft}
+            min={AUTO_COMPACT_THRESHOLD_LIMITS.min}
+            max={AUTO_COMPACT_THRESHOLD_LIMITS.max}
+            step={AUTO_COMPACT_THRESHOLD_LIMITS.step}
+            disabled={disabled}
+            aria-invalid={!valid}
+            onChange={(event) => { setDraft(event.currentTarget.value) }}
+          />
+        </label>
+        <label className={css.autoCompactSlider}>
+          <span className={css.autoCompactSliderLabel}>{t('autoCompact.sliderLabel')}</span>
+          <input
+            type="range"
+            value={valid ? draft : String(value)}
+            min={AUTO_COMPACT_THRESHOLD_LIMITS.min}
+            max={AUTO_COMPACT_THRESHOLD_LIMITS.max}
+            step={AUTO_COMPACT_THRESHOLD_LIMITS.step}
+            disabled={disabled}
+            onChange={(event) => { setDraft(event.currentTarget.value) }}
+          />
+        </label>
+      </div>
+      <div className={css.autoCompactQuick} role="group" aria-label={t('autoCompact.quick')}>
+        {AUTO_COMPACT_QUICK_VALUES.map(quick => (
+          <button
+            key={quick}
+            type="button"
+            className={css.autoCompactQuickButton}
+            aria-pressed={valid && parsed === quick}
+            disabled={disabled}
+            onClick={() => { setDraft(String(quick)) }}
+          >
+            {`${String(quick)}%`}
+          </button>
+        ))}
+      </div>
+      {risk === undefined ? null : (
+        <div className={risk === 'autoCompact.invalid' ? css.error : css.autoCompactRisk} role={risk === 'autoCompact.invalid' ? 'alert' : 'note'}>
+          {t(risk)}
+        </div>
+      )}
+      <div className={css.actions}>
+        <button
+          type="button"
+          disabled={disabled || !valid || parsed === value}
+          onClick={() => { settle(() => save(parsed)) }}
+        >
+          {t('autoCompact.save')}
+        </button>
+      </div>
+    </section>
   )
 }
 

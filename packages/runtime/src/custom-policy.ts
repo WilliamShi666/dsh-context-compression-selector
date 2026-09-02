@@ -101,6 +101,12 @@ export const DEFAULT_CUSTOM_COMPRESSION_POLICY: CustomCompressionPolicyV3 = deep
 export interface CustomPolicyResolutionOptions {
   /** Positive resolved shared model context capacity. */
   readonly contextWindowTokens?: number
+  /**
+   * Frozen Auto Compact threshold percent. Standard profiles use it to link
+   * History watermarks to the Auto Compact level; Custom resolution ignores it
+   * because Custom stays explicit-token manual.
+   */
+  readonly autoCompactThresholdPercent?: number
 }
 
 /**

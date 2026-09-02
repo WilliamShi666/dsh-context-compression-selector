@@ -95,13 +95,13 @@ function captureAudit(ctx) {
   return records
 }
 
-function appendToolTurn(session, turn, text, closeTurn, userText) {
+function appendToolTurn(session, turn, text, closeTurn, userText, provider = 'deepseek', model = MODEL) {
   const callId = CallId(`packed-call-${String(turn)}`)
   session.append('turn/start', { turn })
   if (session.requestHeader() === undefined) {
     session.append('request/header', {
       reason: 'initial',
-      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+      header: canonicalHeader({ config: { provider, model } }),
     })
   }
   if (userText !== undefined) {
@@ -117,7 +117,7 @@ function appendToolTurn(session, turn, text, closeTurn, userText) {
     message: createMessage({
       role: 'assistant',
       content: [{ type: 'tool-call', id: callId, name: 'bash', arguments: '{}' }],
-      source: { kind: 'model', provider: 'deepseek', model: MODEL },
+      source: { kind: 'model', provider, model },
     }),
   }, { surfaceOp: 'append' })
   session.append('tool/call', { turn, step: 1, callId, name: 'bash', arguments: '{}' })
@@ -218,7 +218,10 @@ try {
   policy.aggregate = { enabled: true, trigger: 1_000, target: 400 }
   policy.history = {
     enabled: true,
-    trigger: 40,
+    // Strict required-reclaim: the batch must pull tool tokens back under the
+    // trigger, so it sits above the large protected tail and placeholder
+    // residue while remaining below the session's tool-result total.
+    trigger: 7_800,
     keepRecentToolCalls: 0,
     keepRecentTokens: 1,
     minReclaim: 1,
@@ -249,7 +252,7 @@ try {
   ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 2, freshStep: 1 })
   session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
   appendToolTurn(session, 3, 'packed History '.repeat(600), true, 'run packed History')
-  appendToolTurn(session, 4, 'packed recent working set', true, 'retain packed recent context')
+  appendToolTurn(session, 4, 'packed recent protected working-set context '.repeat(1000), true, 'retain packed recent context')
   session.append('turn/start', { turn: 5 })
   ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
 
@@ -289,7 +292,7 @@ try {
   capacityPolicy.aggregate.enabled = false
   capacityPolicy.history = {
     enabled: true,
-    trigger: 40,
+    trigger: 400,
     keepRecentToolCalls: 0,
     keepRecentTokens: 1,
     minReclaim: 1,
@@ -312,7 +315,7 @@ try {
     && record.sessionId === String(inactiveCapacity.id)
     && record.component === 'history')
   assert(inactiveCapacityAudit?.status === 'skipped'
-    && inactiveCapacityAudit.reason === 'capacity-pressure-inactive'
+    && inactiveCapacityAudit.reason === 'below-micro-deadline'
     && inactiveCapacityAudit.historyMode === 'capacity-pressure',
   'installed History did not prove the inactive capacity-pressure gate')
 
@@ -354,7 +357,7 @@ try {
       freshTargetTokens: 90_000,
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
-      historyTriggerTokens: 40,
+      historyTriggerTokens: 400,
       historyKeepRecentToolCalls: 0,
       historyKeepRecentTokens: 1,
       historyMinReclaimTokens: 1,
@@ -366,10 +369,13 @@ try {
     const boundarySession = boundaryAgent.session
     appendToolTurn(boundarySession, 1, 'packed old capacity-pressure evidence '.repeat(600), true)
     appendToolTurn(boundarySession, 2, 'packed newest protected result', true)
+    const boundaryTotal = boundaryCtx.tokenMeter.measure(boundarySession).totalTokens
     boundarySession.append('request/context', {
       provider: 'deepseek',
       model: MODEL,
-      contextWindow: 100,
+      // Just under the frozen 80% deadline D = 0.7 * window so the gate is
+      // active while the strict reclaim target stays reachable.
+      contextWindow: Math.floor(boundaryTotal / 0.72),
     })
     boundaryAgent.followup(createUserMessage({
       content: [{ type: 'text', text: 'run packed Cache Strict pressure pass' }],
@@ -385,6 +391,191 @@ try {
     'installed Cache Strict did not schedule History from the real request boundary')
   } finally {
     await boundaryCtx.fiber.dispose()
+  }
+
+  // Packed vision-session gate: the installed runtime must actually resolve
+  // the deepseek-v4-flash-vision-exp route, count text exactly with the
+  // separately bundled vision tokenizer, estimate image surfaces, and keep
+  // image-bearing results outside exact rewrite proofs.
+  const VISION_MODEL = 'deepseek-v4-flash-vision-exp'
+  const VISION_TOKENIZER_REPOSITORY = 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
+  const VISION_TOKENIZER_REVISION = '6821d6ad3681a4b137b066b76094fa82ebd0a380'
+  const imageBlock = (width, height) => ({
+    type: 'image',
+    attachment: {
+      attachmentId: `packed-image-${String(width)}x${String(height)}`,
+      mediaType: 'image/png',
+      bytes: 1_024,
+      width,
+      height,
+    },
+  })
+  const visionCtx = new Context()
+  try {
+    await visionCtx.plugin(MemorySettings).await()
+    await visionCtx.plugin(SelectorHost).await()
+    await visionCtx.plugin(LlmRuntime)
+    await visionCtx.plugin(SessionStore)
+    await visionCtx.plugin(SystemPrompt)
+    await visionCtx.plugin(ToolRuntime)
+    await visionCtx.plugin(TokenMeter)
+    const visionAudit = captureAudit(visionCtx)
+    await visionCtx.plugin(Runtime.default, {
+      profile: 'balanced',
+      freshTriggerTokens: 1_000_000,
+      freshTargetTokens: 900_000,
+      aggregateTriggerTokens: 100,
+      aggregateTargetTokens: 64,
+      historyTriggerTokens: 600,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+
+    // (a) A user image plus pure-text tool results: the text rewrites must be
+    // exact and carry the vision tokenizer's repository/revision.
+    const visionText = visionCtx.sessions.create(SessionId('packed-vision-text-session'))
+    visionText.append('turn/start', { turn: 1 })
+    visionText.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    visionText.append('user/message', createUserMessage({
+      content: [
+        imageBlock(640, 480),
+        { type: 'text', text: 'describe the attachment and run the tools' },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    visionText.append('step/start', { turn: 1, step: 1 })
+    visionText.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('packed-vision-call-1'), name: 'bash', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: VISION_MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    visionText.append('tool/call', { turn: 1, step: 1, callId: CallId('packed-vision-call-1'), name: 'bash', arguments: '{}' })
+    visionText.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('packed-vision-call-1'),
+        content: [{ type: 'text', text: 'packed vision fresh evidence '.repeat(1_000) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    visionText.append('step/end', { turn: 1, step: 1 })
+    visionText.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    appendToolTurn(visionText, 2, 'packed vision history evidence '.repeat(300), true, undefined, 'deepseek', VISION_MODEL)
+    appendToolTurn(visionText, 3, 'packed recent protected result', true, undefined, 'deepseek', VISION_MODEL)
+    visionText.append('turn/start', { turn: 4 })
+    const visionFresh = visionCtx.toolResultPruner.pruneSession(visionText, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    const visionPressure = visionCtx.toolResultPruner.pruneSession(visionText, { stage: 'pressure' })
+    assert(visionFresh.pruned.length === 1 && visionPressure.pruned.length >= 1,
+      'packed vision text session did not rewrite pure-text results')
+    const visionRewrites = visionAudit
+      .filter(record => record.kind === 'rewrite' && record.sessionId === String(visionText.id))
+    assert(visionRewrites.length >= 2, 'packed vision text session lacks aggregate and history rewrites')
+    for (const record of visionRewrites) {
+      assert(record.tokenizerId === VISION_TOKENIZER_REPOSITORY
+        && record.tokenizerRevision === VISION_TOKENIZER_REVISION,
+      `packed vision rewrite used tokenizer ${String(record.tokenizerId)}@${String(record.tokenizerRevision)}`)
+    }
+    assert(visionRewrites.some(record => record.component === 'aggregate')
+      && visionRewrites.some(record => record.component === 'history'),
+    'packed vision text session lacks an aggregate/history component rewrite')
+
+    // (b) An image-bearing tool result: its surface may be estimated, but every
+    // rewrite path still requires exact counts. The original event is untouched
+    // and the audits say why no rewrite was authorized.
+    const visionImage = visionCtx.sessions.create(SessionId('packed-vision-image-tool-result'))
+    visionImage.append('turn/start', { turn: 1 })
+    visionImage.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    const estimatedUserImage = visionImage.append('user/message', createUserMessage({
+      content: [imageBlock(800, 600)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    visionImage.append('step/start', { turn: 1, step: 1 })
+    visionImage.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('packed-vision-image-call'), name: 'screenshot', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: VISION_MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    visionImage.append('tool/call', { turn: 1, step: 1, callId: CallId('packed-vision-image-call'), name: 'screenshot', arguments: '{}' })
+    const imageResult = visionImage.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('packed-vision-image-call'),
+        content: [
+          { type: 'text', text: 'packed screenshot captured' },
+          imageBlock(800, 600),
+        ],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    visionImage.append('step/end', { turn: 1, step: 1 })
+    visionImage.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    visionImage.append('turn/start', { turn: 2 })
+    const imageFresh = visionCtx.toolResultPruner.pruneSession(visionImage, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    const imagePressure = visionCtx.toolResultPruner.pruneSession(visionImage, { stage: 'pressure' })
+    assert(imageFresh.pruned.length === 0 && imagePressure.pruned.length === 0,
+      'packed vision image-bearing result was rewritten lossily')
+    const imageMeasurement = Runtime.measureForCompaction(visionCtx, visionImage)
+    const estimatedImageCount = imageMeasurement.measuredNodes
+      .find(node => node.seq === estimatedUserImage.seq)?.count
+    assert(estimatedImageCount?.kind === 'tokenizer-estimate',
+      `packed vision image surface is ${String(estimatedImageCount?.kind)}, expected tokenizer-estimate`)
+    assert(estimatedImageCount.tokens === 340,
+      `packed vision 800x600 estimate is ${String(estimatedImageCount.tokens)}, expected 340`)
+    assert(estimatedImageCount.upperBoundTokens === 384,
+      `packed vision image upper bound is ${String(estimatedImageCount.upperBoundTokens)}, expected 384`)
+    assert(estimatedImageCount.estimatorId === `${VISION_TOKENIZER_REPOSITORY}/image-token-estimate`,
+      `packed vision image estimator id is ${String(estimatedImageCount.estimatorId)}`)
+    assert(estimatedImageCount.estimatorRevision === `${VISION_TOKENIZER_REVISION}:v1`,
+      `packed vision image estimator revision is ${String(estimatedImageCount.estimatorRevision)}`)
+    assert(imageMeasurement.currentSurface.kind === 'tokenizer-estimate',
+      `packed vision current surface is ${imageMeasurement.currentSurface.kind}, expected tokenizer-estimate`)
+    // Tool-result events carry one envelope block whose nested content holds
+    // the original [text, image] blocks; the durable attachment reference must
+    // still be there verbatim.
+    const originalImage = visionImage.events[imageResult.seq]
+    assert(originalImage?.type === 'tool/result'
+      && JSON.stringify(originalImage).includes('packed-image-800x600')
+      && JSON.stringify(originalImage).includes('"type":"image"'),
+    'packed vision image-bearing result is no longer intact on the surface')
+    for (const component of ['fresh', 'history']) {
+      assert(visionAudit.some(record => record.kind === 'component-evaluation'
+        && record.sessionId === String(visionImage.id)
+        && record.component === component
+        && record.status === 'skipped'
+        && record.reason === 'exact-tokenizer-unavailable'),
+      `packed vision image session lacks the ${component} exact-tokenizer-unavailable audit`)
+    }
+
+    console.info(`PACKED_VISION_E2E ${JSON.stringify({
+      model: VISION_MODEL,
+      tokenizer: { repository: VISION_TOKENIZER_REPOSITORY, revision: VISION_TOKENIZER_REVISION },
+      textSession: 'exact-rewrites-with-vision-tokenizer',
+      imageSession: {
+        measurement: estimatedImageCount,
+        currentSurfaceKind: imageMeasurement.currentSurface.kind,
+        exactRewriteIneligible: true,
+        originalIntact: true,
+      },
+    })}`)
+  } finally {
+    await visionCtx.fiber.dispose()
   }
 
   const beforeNative = ctx.tokenMeter.measure(session).totalTokens

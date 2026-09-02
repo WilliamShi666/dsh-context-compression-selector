@@ -2,7 +2,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,14 +39,81 @@ export interface PresetOverlayOptions {
   readonly modules: CompressionModulePaths
   /** Preset ids that deliberately retain their native composition. */
   readonly excludedPresetIds?: readonly string[]
+  /**
+   * Reads the Auto Compact threshold percent (50–90) to freeze into newly
+   * generated compositions — once per composition, into BOTH the
+   * compaction-basic `thresholdRatio` and the runtime deployment config, so
+   * one generation can never split Auto Compact and micro compact across two
+   * thresholds. Returning `undefined` keeps both defaults untouched.
+   */
+  readonly autoCompactThresholdPercent?: () => number | undefined
   /** Test seam for locating the owner-only generated directory. */
   readonly tempParent?: string
+  /**
+   * Metadata boundary used to prepare and observe the native standing key.
+   * Production uses the real filesystem; tests may model coarser mtime
+   * resolution without replacing identity generation.
+   */
+  readonly metadataIo?: PresetOverlayMetadataIo
+}
+
+/** Minimal filesystem metadata surface that determines AgentPresets identity. */
+export interface PresetOverlayMetadataIo {
+  /** Persist one deterministic atime/mtime stamp on an unpublished staging file. */
+  setTimes(path: string, stamp: Date): Promise<void>
+  /** Read exactly the fields consumed by AgentPresets' standing key. */
+  read(path: string): Promise<Readonly<{ mtimeMs: number, size: number }>>
 }
 
 /** Handle returned by {@link decorateAgentPresets}. */
 export interface PresetOverlayInstallation {
   /** Restore native methods and remove every generated composition. */
   dispose(): Promise<void>
+}
+
+/**
+ * Fixed base for deterministic standing mtimes. The stamp is derived from the
+ * FULL content identity (source + modules + threshold), not from the write
+ * clock: identical identities always republish to the same stamp (no
+ * generation flapping).
+ *
+ * The seconds component carries an 8-hex identity window directly. Most
+ * identities therefore separate even when a filesystem truncates mtimes to
+ * whole seconds; identities that share that 32-bit window deliberately collide
+ * first, are detected from the staging file's observed {mtimeMs, size}, and
+ * escalate to later hash windows before publication. The prefix keeps the
+ * latest possible stamp around year 2162, inside the nanosecond range every
+ * supported filesystem can store; the next 3 hex digits set sub-second
+ * milliseconds on filesystems that preserve them.
+ */
+const STANDING_MTIME_EPOCH_SECONDS = Math.floor(Date.UTC(2026, 0, 1) / 1000)
+const STANDING_MTIME_WINDOW_HEX = 11
+
+const DEFAULT_METADATA_IO: PresetOverlayMetadataIo = Object.freeze({
+  async setTimes(path: string, stamp: Date): Promise<void> {
+    await utimes(path, stamp, stamp)
+  },
+  async read(path: string): Promise<Readonly<{ mtimeMs: number, size: number }>> {
+    const observed = await stat(path)
+    return { mtimeMs: observed.mtimeMs, size: observed.size }
+  },
+})
+
+/**
+ * Deterministic standing stamp for one full generation identity, read from
+ * hash window `windowIndex` (0 = identity prefix). Exported for the
+ * collision-fixture tests; production code uses {@link standingStampMs}.
+ */
+export function standingStampMsAtWindow(identity: string, windowIndex: number): number {
+  const start = windowIndex * STANDING_MTIME_WINDOW_HEX
+  const seconds = STANDING_MTIME_EPOCH_SECONDS + parseInt(identity.slice(start, start + 8).padEnd(8, '0'), 16)
+  const subSecond = parseInt(identity.slice(start + 8, start + STANDING_MTIME_WINDOW_HEX).padEnd(3, '0'), 16) % 1000
+  return seconds * 1000 + subSecond
+}
+
+/** Deterministic standing stamp for one full generation identity. */
+export function standingStampMs(identity: string): number {
+  return standingStampMsAtWindow(identity, 0)
 }
 
 const COMPRESSION_IDS = new Set([
@@ -95,8 +162,10 @@ interface CompositionOperation {
 class PresetOverlayStore {
   private rootTask: Promise<string> | undefined
   private disposed = false
+  private readonly metadataIo: PresetOverlayMetadataIo
 
   constructor(private readonly options: PresetOverlayOptions) {
+    this.metadataIo = options.metadataIo ?? DEFAULT_METADATA_IO
     const paths = Object.entries(options.modules) as [keyof CompressionModulePaths, string][]
     for (const [name, path] of paths) {
       if (!isAbsolute(path)) {
@@ -111,9 +180,15 @@ class PresetOverlayStore {
     if (preset.broken !== undefined) return preset
     const source = await readFile(preset.path, 'utf8')
     const rows = parseRows(source, preset.path)
+    const thresholdPercent = this.options.autoCompactThresholdPercent?.()
+    if (thresholdPercent !== undefined && !Number.isFinite(thresholdPercent)) {
+      // JSON.stringify maps NaN to null (colliding identities) and the YAML
+      // dump would serialize it as `.nan`; refuse instead.
+      throw new Error(`context-compression selector: Auto Compact threshold percent must be finite, got ${String(thresholdPercent)}`)
+    }
     const patched = applyEntryPatches(
       stripCompressionRows(rows),
-      [{ insert: canonicalCompressionRows(this.options.modules) }],
+      [{ insert: canonicalCompressionRows(this.options.modules, thresholdPercent) }],
       (message: string, ...args: unknown[]) => {
         throw new Error(renderPatchWarning(message, args))
       },
@@ -124,21 +199,67 @@ class PresetOverlayStore {
       lineWidth: -1,
       sortKeys: false,
     })
+    // The percent joins the content identity by value, not by rendered
+    // length, so an equal-length change (70 -> 80) still produces a new file.
     const identity = createHash('sha256')
       .update(preset.id).update('\0')
       .update(source).update('\0')
-      .update(JSON.stringify(this.options.modules))
+      .update(JSON.stringify({ modules: this.options.modules, autoCompactThresholdPercent: thresholdPercent ?? null }))
       .digest('hex')
       .slice(0, 24)
     const root = await this.root()
     const path = join(root, `${preset.id}-${identity}.agent.cordis.yml`)
+    // Publish through a unique temporary file whose content, permissions, and
+    // DETERMINISTIC identity stamp are all complete before the atomic rename:
+    // once the final path exists it is fully metadata'd, so a concurrent
+    // composer (or AgentPresets' standing-key reader) can never observe a
+    // wall-clock mtime on a published composition.
+    const staging = join(root, `${preset.id}-${identity}.${String(process.pid)}-${String(Math.random()).slice(2)}.tmp`)
     try {
-      await writeFile(path, rendered, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      await writeFile(staging, rendered, { encoding: 'utf8', mode: 0o600 })
+      await chmod(staging, 0o600)
+      // Reserve and verify the FINAL observed standing key while the file is
+      // still private. No reader can observe a colliding {mtimeMs,size}
+      // between rename and a later corrective utimes call.
+      await this.disambiguateStamp(staging, identity)
+      await rename(staging, path)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      // A failed publish must not leak its staging file into the store; the
+      // cleanup must never mask the original failure either.
+      try {
+        await rm(staging, { force: true })
+      } catch {
+        // intentional: the publish error below is the actionable one
+      }
+      throw error
     }
-    await chmod(path, 0o600)
     return { ...preset, path }
+  }
+
+  /** Observed {mtimeMs,size} keys published by this store, per identity. */
+  private readonly standingKeys = new Map<string, string>()
+
+  /**
+   * Ensure an unpublished staging file's observed {mtimeMs, size} is not
+   * shared with a different identity. Escalation rewrites the mtime from later
+   * hash windows before atomic publication, and fails loudly if no window
+   * separates them (better a loud error than a silently reused generation).
+   */
+  private async disambiguateStamp(path: string, identity: string): Promise<void> {
+    for (let window = 0; window < 3; window += 1) {
+      const stamp = new Date(standingStampMsAtWindow(identity, window))
+      await this.metadataIo.setTimes(path, stamp)
+      // The native key uses the on-disk byte size, not the UTF-16 length of
+      // the rendered string.
+      const observed = await this.metadataIo.read(path)
+      const key = `${String(observed.mtimeMs)}:${String(observed.size)}`
+      const owner = this.standingKeys.get(key)
+      if (owner === undefined || owner === identity) {
+        this.standingKeys.set(key, identity)
+        return
+      }
+    }
+    throw new Error(`context-compression selector: standing stamp collision for identity ${identity} across all hash windows`)
   }
 
   /** Remove all generated files without touching any source preset. */
@@ -188,8 +309,17 @@ function stripCompressionRows(rows: EntryOptions[]): EntryOptions[] {
   return kept
 }
 
-/** Complete, same-realm compression stack added to every applicable preset. */
-function canonicalCompressionRows(modules: CompressionModulePaths): EntryOptions[] {
+/**
+ * Complete, same-realm compression stack added to every applicable preset.
+ * When the Host settings expose an Auto Compact threshold, one read feeds both
+ * the compaction-basic `thresholdRatio` (beside the pinned first-release
+ * `retainRatio`) and the runtime deployment config, so plugin History and
+ * native Auto Compact share one watermark for this whole generation.
+ */
+function canonicalCompressionRows(
+  modules: CompressionModulePaths,
+  thresholdPercent?: number,
+): EntryOptions[] {
   return [
     {
       id: 'compaction',
@@ -203,6 +333,12 @@ function canonicalCompressionRows(modules: CompressionModulePaths): EntryOptions
         {
           id: 'compaction-basic',
           name: modules.compactionBasic,
+          ...(thresholdPercent === undefined ? {} : {
+            config: {
+              thresholdRatio: thresholdPercent / 100,
+              retainRatio: 0.16,
+            },
+          }),
         },
         {
           id: 'command-compact',
@@ -214,6 +350,7 @@ function canonicalCompressionRows(modules: CompressionModulePaths): EntryOptions
           config: {
             headChars: 4096,
             tailChars: 1024,
+            ...(thresholdPercent === undefined ? {} : { autoCompactThresholdPercent: thresholdPercent }),
           },
         },
       ],
@@ -255,6 +392,19 @@ interface SharedDecoration {
 const SHARED_DECORATION = Symbol.for(
   'dsh-context-compression-selector/preset-overlay',
 )
+
+/** Object-identity keys keep test metadata policies from sharing one store. */
+const METADATA_IO_KEYS = new WeakMap<object, number>()
+let nextMetadataIoKey = 1
+
+function metadataIoKey(metadataIo: PresetOverlayMetadataIo): number {
+  const existing = METADATA_IO_KEYS.get(metadataIo)
+  if (existing !== undefined) return existing
+  const key = nextMetadataIoKey
+  nextMetadataIoKey += 1
+  METADATA_IO_KEYS.set(metadataIo, key)
+  return key
+}
 
 /**
  * Reversibly decorate native AgentPresets composition calls.
@@ -313,6 +463,7 @@ function overlayOptionsKey(options: PresetOverlayOptions): string {
     modules: options.modules,
     excludedPresetIds: [...(options.excludedPresetIds ?? ['minimal'])].sort(),
     tempParent: options.tempParent,
+    metadataIo: metadataIoKey(options.metadataIo ?? DEFAULT_METADATA_IO),
   })
 }
 

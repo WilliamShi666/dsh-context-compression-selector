@@ -9,21 +9,12 @@ import {
   type CompressionProfile, type CompressionSelectorInjected, type ContextCompressionSettings,
 } from './CompressionProfileSelector.tsx'
 import { DEFAULT_CUSTOM_COMPRESSION_POLICY } from '../profiles.ts'
+import { decodeSettings } from './decode.ts'
 import { en, zh } from './locales.ts'
 
 export const inject = ['slots', 'locale', 'settingsScope']
 const NS = 'context-compression'
 
-function decodeSettings(value: unknown): ContextCompressionSettings | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const profile = (value as { profile?: unknown }).profile
-  const custom = (value as { custom?: unknown }).custom
-  return typeof profile === 'string'
-    && (COMPRESSION_PROFILES as readonly string[]).includes(profile)
-    && isCustomCompressionPolicy(custom)
-    ? { profile: profile as CompressionProfile, custom }
-    : undefined
-}
 
 function sameCustomPolicy(
   left: ContextCompressionSettings['custom'],
@@ -82,6 +73,10 @@ export function apply(ctx: ClientContext): void {
       () => scope.set('custom', structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY)),
       settings => isCustomCompressionPolicy(settings.custom)
         && sameCustomPolicy(settings.custom, DEFAULT_CUSTOM_COMPRESSION_POLICY),
+    ),
+    saveAutoCompact: thresholdPercent => writeAndConfirm(
+      () => scope.set('autoCompact', { thresholdPercent }),
+      settings => settings.autoCompact.thresholdPercent === thresholdPercent,
     ),
   })
   ctx.slots.inject('settings.section', () => ctx.slots.register({

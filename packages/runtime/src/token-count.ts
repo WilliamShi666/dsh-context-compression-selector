@@ -14,7 +14,7 @@ export interface UnavailableTokenCount {
   readonly reason: string
 }
 
-/** Conservative provider-request estimate retained for Adaptive compatibility. */
+/** Best-effort estimate carrying a conservative upper value when available. */
 export interface TokenizerEstimateTokenCount {
   readonly kind: 'tokenizer-estimate'
   readonly tokens: number

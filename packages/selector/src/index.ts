@@ -68,10 +68,26 @@ export function apply(ctx: Context, config: Config = {}): void {
       {
         modules: resolveCompressionModulePaths(),
         excludedPresetIds: ['minimal'],
+        autoCompactThresholdPercent: () => resolveAutoCompactThresholdPercent(presetsCtx),
       },
     )
     presetsCtx.effect(() => () => installation.dispose(), 'contextCompressionSelector.agentPresets()')
   })
+}
+
+/**
+ * Read the current Auto Compact threshold ratio at composition time. Settings
+ * values are revalidated here, and any unreadable value falls back to the 80%
+ * default rather than blocking preset composition.
+ */
+function resolveAutoCompactThresholdPercent(presetsCtx: Context): number {
+  const raw = presetsCtx.get('settings')?.get(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE))
+  try {
+    const parsed = ContextCompressionSettingsSchema(structuredClone(raw) as never)
+    return parsed.autoCompact.thresholdPercent
+  } catch {
+    return 80
+  }
 }
 
 /**

@@ -83,12 +83,20 @@ export interface CustomCompressionPolicyV3 extends CustomCompressionPolicyFields
 /** Strict persisted Custom policy union. */
 export type CustomCompressionPolicy = CustomCompressionPolicyV1 | CustomCompressionPolicyV2 | CustomCompressionPolicyV3
 
+/** User-tunable Auto Compact coordination preferences. */
+export interface AutoCompactSettings {
+  /** Routed-context percentage that triggers model-driven Auto Compact. */
+  thresholdPercent: number
+}
+
 /** Durable global preference exposed through `ctx.settings`. */
 export interface ContextCompressionSettings {
   /** Default strategy snapped when a Session first reaches the pruner. */
   profile: CompressionProfile
   /** Versioned Custom policy snapped with `profile` for a newly observed Session. */
   custom: CustomCompressionPolicy
+  /** Auto Compact trigger preference snapped with `profile` for a newly observed Session. */
+  autoCompact: AutoCompactSettings
 }
 
 /** Token-gated policy with character fields limited to reducer candidate shape. */
@@ -119,6 +127,13 @@ export interface ToolResultPruneConfig {
   historyKeepRecentTokens?: number
   /** Minimum reclaim required before historical aging is worth a cache break. Profile default when omitted. */
   historyMinReclaimTokens?: number
+  /**
+   * Auto Compact threshold percent frozen into this deployment by the preset
+   * overlay generation (50–90 integer). When present it supersedes the live
+   * Host setting so one generation never splits Auto Compact and micro
+   * compact across two thresholds.
+   */
+  autoCompactThresholdPercent?: number
 }
 
 /** Resolved per-profile behavior. */
@@ -139,6 +154,18 @@ export interface CompressionPolicy {
   readonly historyKeepRecentToolCalls: number
   readonly historyKeepRecentTokens: number
   readonly historyMinReclaimTokens: number
+  /**
+   * Auto Compact token watermark `A = floor(C × a)` when the standard-profile
+   * History linkage resolved for this Session; absent for Custom, Off, Native,
+   * or unresolved routed capacity.
+   */
+  readonly autoCompactTokens?: number
+  /**
+   * Micro-compact last-chance watermark `D = floor(A × 0.875)`. Absent when
+   * {@link autoCompactTokens} is absent; capacity-pressure gates fall back to
+   * the fixed 0.7 routed-context ratio in that case.
+   */
+  readonly microDeadlineTokens?: number
   /** Present for Custom v3; standard profiles and legacy Custom policies carry no TailTrim policy. */
   readonly tailTrim?: {
     readonly enabled: boolean
@@ -161,6 +188,11 @@ export interface ResolvedConfig {
   readonly historyKeepRecentToolCalls?: number
   readonly historyKeepRecentTokens?: number
   readonly historyMinReclaimTokens?: number
+  /**
+   * Auto Compact threshold percent frozen into this deployment by the preset
+   * overlay generation (50-90 integer). Supersedes the live Host setting.
+   */
+  readonly autoCompactThresholdPercent?: number
 }
 
 /** Why a pruning pass runs. */

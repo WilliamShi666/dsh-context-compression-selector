@@ -6,6 +6,7 @@ import {
   createUserMessage,
   createToolResultMessage,
   LlmAdapter,
+  type ContentBlock,
   type GenerateOptions,
   type LlmResolvedModelInfo,
   type StreamChunk,
@@ -43,7 +44,14 @@ import ToolResultPruner, {
   resolvePolicy,
 } from '../../src/index.ts'
 import type { CustomCompressionPolicy } from '../../src/index.ts'
-import { deepSeekV4TokenizerForModel } from '../../src/deepseek-v4-tokenizer.ts'
+import { DEEPSEEK_V4_TOKENIZER_ARTIFACT, deepSeekV4TokenizerForModel } from '../../src/deepseek-v4-tokenizer.ts'
+import {
+  DEEPSEEK_VISION_DEFAULT_IMAGE_TOKENS,
+  DEEPSEEK_VISION_IMAGE_ESTIMATOR,
+  DEEPSEEK_VISION_PROJECTION,
+  deepSeekVisionImageBlockTokens,
+  deepSeekVisionImageGrid,
+} from '../../src/deepseek-v4-vision-tokens.ts'
 import { validatePublishedTailTrim } from '../../src/tail-trim.ts'
 import { measureForCompaction } from '../../src/measurement.ts'
 import {
@@ -53,7 +61,24 @@ import {
 } from '../../src/audit.ts'
 
 const MODEL = 'deepseek-v4-flash'
+const VISION_MODEL = 'deepseek-v4-flash-vision-exp'
 const activeContexts: Context[] = []
+
+/** Metadata-only raster image block; never carries image bytes. */
+function imageBlock(width: number, height: number): ContentBlock {
+  // AttachmentId is an opaque brand over string; tests construct the durable
+  // reference structurally without importing the attachment package.
+  return {
+    type: 'image',
+    attachment: {
+      attachmentId: `test-image-${String(width)}x${String(height)}`,
+      mediaType: 'image/png',
+      bytes: 1_024,
+      width,
+      height,
+    },
+  } as ContentBlock
+}
 
 afterEach(async () => {
   for (const ctx of activeContexts.splice(0)) await ctx.fiber.dispose()
@@ -137,13 +162,14 @@ function appendToolTurn(
   closeTurn: boolean,
   userText?: string,
   provider = 'deepseek',
+  model: string = MODEL,
 ): { readonly assistantSeq: number; readonly resultSeq: number } {
   const callId = CallId(`call-${String(turn)}`)
   session.append('turn/start', { turn })
   if (session.requestHeader() === undefined) {
     session.append('request/header', {
       reason: 'initial',
-      header: canonicalHeader({ config: { provider, model: MODEL } }),
+      header: canonicalHeader({ config: { provider, model } }),
     })
   }
   if (userText !== undefined) {
@@ -159,7 +185,7 @@ function appendToolTurn(
     message: createMessage({
       role: 'assistant',
       content: [{ type: 'tool-call', id: callId, name: 'bash', arguments: '{}' }],
-      source: { kind: 'model', provider: 'deepseek', model: MODEL },
+      source: { kind: 'model', provider, model },
     }),
   }, { surfaceOp: 'append' })
   session.append('tool/call', { turn, step: 1, callId, name: 'bash', arguments: '{}' })
@@ -260,10 +286,15 @@ function stubAgent(ctx: Context, session: Session): Agent {
 }
 
 describe('standalone runtime on published Harness APIs', () => {
-  it('loads the pinned official tokenizer and refuses unverified model ids', () => {
+  it('loads the pinned official tokenizers and refuses unverified model ids', () => {
     const tokenizer = deepSeekV4TokenizerForModel(MODEL)
     expect(tokenizer?.countText('DeepSeek Harness').tokens).toBeGreaterThan(0)
-    expect(deepSeekV4TokenizerForModel('deepseek-v4-flash-vision-exp')).toBeUndefined()
+    expect(deepSeekV4TokenizerForModel('deepseek-v4-flash-vision-exp')?.countText('DeepSeek Harness')).toMatchObject({
+      kind: 'exact-tokenizer',
+      tokenizerId: 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp',
+      tokenizerRevision: '6821d6ad3681a4b137b066b76094fa82ebd0a380',
+    })
+    expect(deepSeekV4TokenizerForModel('deepseek-v4-flash-vision')).toBeUndefined()
   })
 
   it.each([
@@ -425,6 +456,7 @@ describe('standalone runtime on published Harness APIs', () => {
       return entry.tokens
     })
     const recentTailTokens = counts.slice(-3).reduce((sum, tokens) => sum + tokens, 0) - 1
+    const totalToolTokens = counts.reduce((sum, tokens) => sum + tokens, 0)
 
     await ctx.plugin(ToolResultPruner, {
       profile: 'balanced',
@@ -432,7 +464,10 @@ describe('standalone runtime on published Harness APIs', () => {
       freshTargetTokens: 90_000,
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
-      historyTriggerTokens: 100,
+      // The strict required-reclaim gate demands one batch pull tool tokens
+      // back below the trigger; 72% leaves exactly the two oldest results as
+      // the reclaimable margin above the placeholder residue.
+      historyTriggerTokens: Math.floor(totalToolTokens * 0.72),
       historyKeepRecentToolCalls: 2,
       historyKeepRecentTokens: recentTailTokens,
       historyMinReclaimTokens: 1,
@@ -456,7 +491,7 @@ describe('standalone runtime on published Harness APIs', () => {
       freshTargetTokens: 90_000,
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
-      historyTriggerTokens: 100,
+      historyTriggerTokens: 1_200,
       historyKeepRecentToolCalls: 0,
       historyKeepRecentTokens: 1,
       historyMinReclaimTokens: 1,
@@ -481,6 +516,948 @@ describe('standalone runtime on published Harness APIs', () => {
     expect(record?.tokensAfter).toBeLessThan(record?.tokensBefore ?? 0)
   })
 
+  it('moves the capacity-pressure gate with the frozen Auto Compact threshold', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+
+    // A high threshold delays the micro-compact last-chance gate past the old
+    // fixed 0.7 ratio: pressure between 0.7*C and D must NOT age history.
+    await ctx.settings.update(namespace, { profile: 'cache-strict', autoCompact: { thresholdPercent: 90 } })
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'cache-strict',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+    }).await()
+    const delayed = Session.create(SessionId('public-autocompact-90-delayed'))
+    appendToolTurn(delayed, 1, 'delayed gate evidence '.repeat(600), true)
+    appendToolTurn(delayed, 2, 'newest protected result', true)
+    const delayedTotal = measureForCompaction(ctx, delayed).totalTokens
+    const delayedWindow = Math.floor(delayedTotal / 0.72)
+    delayed.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: delayedWindow })
+    delayed.append('turn/start', { turn: 3 })
+    ctx.toolResultPruner.pruneSession(delayed, { stage: 'pressure' })
+    expect(rewrites(audit.records()).some(record =>
+      record.sessionId === String(delayed.id) && record.component === 'history')).toBe(false)
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(delayed.id),
+      component: 'history',
+      reason: 'below-micro-deadline',
+      triggerTokens: Math.floor(Math.floor(delayedWindow * 90 / 100) * 0.875),
+    }))
+  })
+
+  it('ages History earlier when the frozen Auto Compact threshold is low', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+
+    // A low threshold pulls the micro-compact deadline below the old fixed
+    // 0.7 ratio: pressure between D and 0.7*C must age history now.
+    await ctx.settings.update(namespace, { profile: 'cache-strict', autoCompact: { thresholdPercent: 50 } })
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'cache-strict',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 400,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const early = Session.create(SessionId('public-autocompact-50-early'))
+    appendToolTurn(early, 1, 'early gate evidence '.repeat(600), true)
+    appendToolTurn(early, 2, 'newest protected result', true)
+    const earlyTotal = measureForCompaction(ctx, early).totalTokens
+    const earlyWindow = Math.floor(earlyTotal / 0.6)
+    early.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: earlyWindow })
+    early.append('turn/start', { turn: 3 })
+    ctx.toolResultPruner.pruneSession(early, { stage: 'pressure' })
+
+    expect(rewrites(audit.records()).some(record =>
+      record.sessionId === String(early.id) && record.component === 'history')).toBe(true)
+  })
+
+  it('freezes the generation-owned threshold over later global settings changes', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+    // The preset overlay captured 70% into this generation's deployment
+    // config; the user then moved the global setting to 90 before the first
+    // prune. Auto Compact and micro compact must both stay on 70%.
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      autoCompactThresholdPercent: 70,
+    }).await()
+    const session = Session.create(SessionId('public-generation-owned-threshold'))
+    appendToolTurn(session, 1, 'generation-owned threshold evidence', false)
+    session.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    await ctx.settings.update(namespace, { profile: 'balanced', autoCompact: { thresholdPercent: 90 } })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+
+    const resolved = audit.records().find(record =>
+      record.kind === 'policy-resolved' && record.sessionId === String(session.id))
+    expect(resolved).toMatchObject({
+      coordination: {
+        thresholdPercent: 70,
+        autoCompactTokens: 700_000,
+        microDeadlineTokens: 612_500,
+      },
+    })
+    const frozen = audit.records().find(record =>
+      record.kind === 'policy-frozen' && record.sessionId === String(session.id))
+    expect(frozen).toMatchObject({
+      autoCompactThresholdSource: 'generation-config',
+      settings: { autoCompact: { thresholdPercent: 70 } },
+    })
+  })
+
+  it('fails open to a lossless frozen policy when stored settings are malformed', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+    // A hand-edited store can surface a document the schema rejects (unknown
+    // top-level key). The runtime must not fall back to a lossy-capable
+    // profile: the session freezes effectively off and keeps every original
+    // tool result.
+    const malformed = {
+      profile: 'off',
+      custom: structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY),
+      unrelated: true,
+    }
+    const originalGet = ctx.settings.get.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'get').mockImplementation((ns: unknown) =>
+      ns === undefined || String(ns) === String(namespace) ? structuredClone(malformed) : originalGet(ns as never))
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 10,
+      freshTargetTokens: 8,
+    }).await()
+    const session = Session.create(SessionId('public-malformed-settings-fail-open'))
+    appendToolTurn(session, 1, 'malformed settings must not compress '.repeat(300), true)
+    session.append('turn/start', { turn: 2 })
+
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(result.pruned).toHaveLength(0)
+    expect(rewrites(audit.records())).toHaveLength(0)
+    const frozen = audit.records().find(record =>
+      record.kind === 'policy-frozen' && record.sessionId === String(session.id))
+    expect(frozen).toMatchObject({
+      settingsInvalidFallback: 'lossless-off',
+      settings: { profile: 'off' },
+    })
+  })
+
+  it.each([
+    ['null profile', { profile: null, custom: structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) }],
+    ['null custom', { profile: 'balanced', custom: null }],
+    ['both sections null', { profile: null, custom: null }],
+    ['own-property undefined profile', { profile: undefined, custom: structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) }],
+    ['own-property undefined custom', { profile: 'off', custom: undefined }],
+    ['profile off plus malformed autoCompact', {
+      profile: 'off',
+      custom: structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY),
+      autoCompact: { thresholdPercent: 400 },
+    }],
+  ])('fails open to a lossless frozen policy when the stored document carries %s', async (label, malformed) => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+    // Schemastery `.default(...)` would silently replace these present-but-null
+    // sections with the balanced/default-v3 policy; the runtime must reject the
+    // document and freeze the session losslessly instead.
+    const originalGet = ctx.settings.get.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'get').mockImplementation((ns: unknown) =>
+      ns === undefined || String(ns) === String(namespace) ? structuredClone(malformed) : originalGet(ns as never))
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 10,
+      freshTargetTokens: 8,
+    }).await()
+    const session = Session.create(SessionId(`public-null-settings-${label.replace(/\s+/gu, '-')}`))
+    appendToolTurn(session, 1, 'null settings must not compress '.repeat(300), true)
+    session.append('turn/start', { turn: 2 })
+
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(result.pruned).toHaveLength(0)
+    expect(rewrites(audit.records())).toHaveLength(0)
+    const frozen = audit.records().find(record =>
+      record.kind === 'policy-frozen' && record.sessionId === String(session.id))
+    expect(frozen).toMatchObject({
+      settingsInvalidFallback: 'lossless-off',
+      settings: { profile: 'off' },
+    })
+  })
+
+  it('validates exotic Host settings before any clone can erase their prototype', async () => {
+    class AutoCompactDocument {
+      thresholdPercent = 73
+    }
+
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+    const malformed = {
+      profile: 'balanced' as const,
+      custom: structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY),
+      autoCompact: new AutoCompactDocument(),
+    }
+    const originalGet = ctx.settings.get.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'get').mockImplementation((ns: unknown) =>
+      ns === undefined || String(ns) === String(namespace) ? malformed : originalGet(ns as never))
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 10,
+      freshTargetTokens: 8,
+    }).await()
+    const session = Session.create(SessionId('public-exotic-settings-before-clone'))
+    appendToolTurn(session, 1, 'exotic settings must not compress '.repeat(300), false)
+
+    const result = ctx.toolResultPruner.pruneSession(session, {
+      stage: 'fresh',
+      freshTurn: 1,
+      freshStep: 1,
+    })
+
+    expect(result.pruned).toHaveLength(0)
+    expect(rewrites(audit.records())).toHaveLength(0)
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'policy-frozen',
+      sessionId: String(session.id),
+      settingsInvalidFallback: 'lossless-off',
+      settings: expect.objectContaining({ profile: 'off' }),
+    }))
+  })
+
+  it('emits a policy audit again when the route returns to a previous value', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, { profile: 'balanced' }).await()
+    const session = Session.create(SessionId('public-policy-audit-reroute-aba'))
+    const route = (model: string) => session.append('request/header', {
+      reason: 'change',
+      header: canonicalHeader({ config: { provider: 'deepseek', model } }),
+    })
+    const prune = (turn: number) => {
+      appendToolTurn(session, turn, `route evidence ${String(turn)}`, false)
+      ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: turn, freshStep: 1 })
+    }
+    prune(1)
+    route('deepseek-v4-pro')
+    prune(2)
+    route(MODEL)
+    prune(3)
+
+    const resolved = audit.records().filter((record): record is Extract<CompressionAuditRecord, { kind: 'policy-resolved' }> =>
+      record.kind === 'policy-resolved' && record.sessionId === String(session.id))
+    expect(resolved).toHaveLength(3)
+    expect(resolved.map(record => record.route?.model)).toEqual([MODEL, 'deepseek-v4-pro', MODEL])
+  })
+
+  it('reports no bundled tokenizer for a DeepSeek model behind another provider', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, { profile: 'balanced' }).await()
+    const session = Session.create(SessionId('public-policy-audit-foreign-provider'))
+    appendToolTurn(session, 1, 'foreign provider evidence', false, undefined, 'openai', 'deepseek-v4-pro')
+    ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'policy-resolved',
+      sessionId: String(session.id),
+      route: { provider: 'openai', model: 'deepseek-v4-pro' },
+      tokenizer: { repository: 'unavailable', revision: 'unavailable' },
+    }))
+  })
+
+  it('emits a fresh policy audit when the durable route changes mid-session', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, { profile: 'balanced' }).await()
+    const session = Session.create(SessionId('public-policy-audit-reroute'))
+    appendToolTurn(session, 1, 'first route evidence', false)
+    ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    session.append('request/header', {
+      reason: 'change',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: 'deepseek-v4-pro' } }),
+    })
+    appendToolTurn(session, 2, 'second route evidence', false, undefined, 'deepseek', 'deepseek-v4-pro')
+    ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 2, freshStep: 1 })
+
+    const resolved = audit.records().filter(record =>
+      record.kind === 'policy-resolved' && record.sessionId === String(session.id))
+    expect(resolved).toHaveLength(2)
+    expect(resolved[0]).toMatchObject({ route: { model: MODEL } })
+    expect(resolved[1]).toMatchObject({ route: { model: 'deepseek-v4-pro' } })
+  })
+
+  it('audits the Auto Compact coordination block on policy resolution', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+    await ctx.settings.update(namespace, { autoCompact: { thresholdPercent: 73 } })
+    await ctx.plugin(ToolResultPruner, { profile: 'balanced' }).await()
+    const session = Session.create(SessionId('public-autocompact-coordination'))
+    appendToolTurn(session, 1, 'coordination audit evidence', false)
+    session.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+
+    const resolved = audit.records().find(record =>
+      record.kind === 'policy-resolved' && record.sessionId === String(session.id))
+    expect(resolved).toMatchObject({
+      policy: {
+        autoCompactTokens: 730_000,
+        microDeadlineTokens: 638_750,
+        historyTriggerTokens: 456_250,
+      },
+      contextWindowTokens: 1_000_000,
+      coordination: {
+        thresholdPercent: 73,
+        autoCompactTokens: 730_000,
+        microDeadlineTokens: 638_750,
+        paramSource: 'auto-compact-linked',
+      },
+      route: { provider: 'deepseek', model: MODEL },
+      tokenizer: {
+        repository: 'deepseek-ai/DeepSeek-V4-Pro',
+        revision: DEEPSEEK_V4_TOKENIZER_ARTIFACT.revision,
+      },
+    })
+
+    // Deployment config overriding every linked History watermark must audit
+    // itself as deployment-override, not as linkage-derived.
+    const overrideCtx = await runtimeContext()
+    await overrideCtx.plugin(TestSettings).await()
+    await overrideCtx.plugin(SelectorHost).await()
+    const overrideAudit = captureAudit(overrideCtx)
+    await overrideCtx.settings.update(namespace, { autoCompact: { thresholdPercent: 73 } })
+    await overrideCtx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      historyTriggerTokens: 123_456,
+      historyKeepRecentTokens: 12_345,
+      historyMinReclaimTokens: 1_234,
+    }).await()
+    const overrideSession = Session.create(SessionId('public-autocompact-deployment-override'))
+    appendToolTurn(overrideSession, 1, 'deployment override evidence', false)
+    overrideSession.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    overrideCtx.toolResultPruner.pruneSession(overrideSession, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    expect(overrideAudit.records()).toContainEqual(expect.objectContaining({
+      kind: 'policy-resolved',
+      sessionId: String(overrideSession.id),
+      coordination: expect.objectContaining({
+        microDeadlineTokens: 638_750,
+        paramSource: 'deployment-override',
+      }),
+    }))
+
+    // A partial override of the linked watermarks reads as mixed.
+    const mixedCtx = await runtimeContext()
+    await mixedCtx.plugin(TestSettings).await()
+    await mixedCtx.plugin(SelectorHost).await()
+    const mixedAudit = captureAudit(mixedCtx)
+    await mixedCtx.settings.update(namespace, { autoCompact: { thresholdPercent: 73 } })
+    await mixedCtx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      historyTriggerTokens: 123_456,
+    }).await()
+    const mixedSession = Session.create(SessionId('public-autocompact-mixed-source'))
+    appendToolTurn(mixedSession, 1, 'mixed source evidence', false)
+    mixedSession.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    mixedCtx.toolResultPruner.pruneSession(mixedSession, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    expect(mixedAudit.records()).toContainEqual(expect.objectContaining({
+      kind: 'policy-resolved',
+      sessionId: String(mixedSession.id),
+      coordination: expect.objectContaining({
+        microDeadlineTokens: 638_750,
+        paramSource: 'mixed',
+      }),
+    }))
+
+    // A route without a verified bundled tokenizer reports the unavailable
+    // identity instead of inventing one.
+    const unknown = Session.create(SessionId('public-autocompact-unknown-route'))
+    appendToolTurn(unknown, 1, 'unknown route evidence', false, undefined, 'deepseek', 'some-other-model')
+    ctx.toolResultPruner.pruneSession(unknown, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'policy-resolved',
+      sessionId: String(unknown.id),
+      route: { provider: 'deepseek', model: 'some-other-model' },
+      tokenizer: { repository: 'unavailable', revision: 'unavailable' },
+    }))
+  })
+
+  it('freezes the Auto Compact threshold per Session and applies new values only to new Sessions', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    const namespace = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+    await ctx.plugin(ToolResultPruner, { profile: 'balanced' }).await()
+
+    const first = Session.create(SessionId('public-autocompact-freeze-first'))
+    appendToolTurn(first, 1, 'frozen threshold evidence', false)
+    first.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    ctx.toolResultPruner.pruneSession(first, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+
+    await ctx.settings.update(namespace, { autoCompact: { thresholdPercent: 73 } })
+
+    const second = Session.create(SessionId('public-autocompact-freeze-second'))
+    appendToolTurn(second, 1, 'new threshold evidence', false)
+    second.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    ctx.toolResultPruner.pruneSession(second, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+
+    // The already-observed session keeps its frozen 80% policy even after
+    // another prune; only the new session adopts 73%.
+    first.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    appendToolTurn(first, 2, 'post-change frozen evidence', false)
+    first.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 1_000_000 })
+    ctx.toolResultPruner.pruneSession(first, { stage: 'fresh', freshTurn: 2, freshStep: 1 })
+
+    const resolvedFor = (sessionId: string) => audit.records().find(record =>
+      record.kind === 'policy-resolved' && record.sessionId === sessionId)
+    expect(resolvedFor(String(first.id))).toMatchObject({
+      coordination: { thresholdPercent: 80, autoCompactTokens: 800_000, microDeadlineTokens: 700_000 },
+    })
+    expect(resolvedFor(String(second.id))).toMatchObject({
+      coordination: { thresholdPercent: 73, autoCompactTokens: 730_000, microDeadlineTokens: 638_750 },
+    })
+    expect(audit.records().filter(record =>
+      record.kind === 'policy-resolved'
+      && record.sessionId === String(first.id)
+      && record.coordination?.thresholdPercent === 73)).toHaveLength(0)
+  })
+
+  it('ages History through the full-request last-chance gate even below the profile trigger', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100_000,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-history-last-chance'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+    })
+    // Non-tool prose carries the full request past the deadline while the
+    // tool results alone stay far below the linked profile trigger.
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'pressure prose '.repeat(1_000) }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('last-chance-old'), name: 'bash', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn: 1, step: 1, callId: CallId('last-chance-old'), name: 'bash', arguments: '{}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('last-chance-old'),
+        content: [{ type: 'text', text: 'last-chance aging evidence '.repeat(700) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    appendToolTurn(session, 2, 'newest protected result', true)
+    // 80% default on a 10,000-token window: A = 8000, linked H = 5000, D = 7000.
+    session.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 10_000 })
+    session.append('turn/start', { turn: 3 })
+
+    const before = measureForCompaction(ctx, session)
+    const toolResultTokens = before.measuredNodes
+      .filter(node => session.events[node.seq]?.type === 'tool/result')
+      .reduce((sum, node) => sum + (node.count.kind === 'exact-tokenizer' ? node.count.tokens : 0), 0)
+    // Deadline D = 7000 is reached by the complete request, not by the tool
+    // results, which stay far below every trigger in force.
+    expect(before.totalTokens).toBeGreaterThanOrEqual(7_000)
+    expect(toolResultTokens).toBeLessThan(7_000)
+
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    const aged = rewrites(audit.records()).filter(record =>
+      record.sessionId === String(session.id) && record.component === 'history')
+    expect(aged.length).toBeGreaterThanOrEqual(1)
+    expect(result.pruned.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it.each(['balanced', 'adaptive'] as const)(
+    'skips a linked History batch that cannot reach its reclaim target in %s mode',
+    async (profile) => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile,
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+
+    // Below the deadline: the excess above the trigger sits mostly in the
+    // protected newest result, so the only reclaimable batch is far too small.
+    const below = Session.create(SessionId(`public-history-insufficient-reclaim-${profile}`))
+    appendToolTurn(below, 1, 'unreachable reclaim evidence '.repeat(400), true)
+    appendToolTurn(below, 2, 'newest protected bulk '.repeat(600), true)
+    below.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 10_000 })
+    below.append('turn/start', { turn: 3 })
+    const belowResult = ctx.toolResultPruner.pruneSession(below, { stage: 'pressure' })
+    expect(belowResult.pruned).toHaveLength(0)
+    expect(rewrites(audit.records()).some(record =>
+      record.sessionId === String(below.id) && record.component === 'history')).toBe(false)
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(below.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'insufficient-reclaim',
+      reclaimTokens: expect.any(Number),
+      requiredTokens: expect.any(Number),
+    }))
+
+    // Past the deadline with tool tokens below the trigger: the last-chance
+    // gate engages planning, and the skip names the deadline target.
+    const past = Session.create(SessionId(`public-history-deadline-unreachable-${profile}`))
+    past.append('turn/start', { turn: 1 })
+    past.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+    })
+    past.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'deadline pressure prose '.repeat(2_000) }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    appendToolTurn(past, 1, 'deadline unreachable evidence '.repeat(400), true)
+    appendToolTurn(past, 2, 'newest protected bulk '.repeat(600), true)
+    past.append('request/context', { provider: 'deepseek', model: MODEL, contextWindow: 10_000 })
+    past.append('turn/start', { turn: 2 })
+    const pastResult = ctx.toolResultPruner.pruneSession(past, { stage: 'pressure' })
+    expect(pastResult.pruned).toHaveLength(0)
+    expect(rewrites(audit.records()).some(record =>
+      record.sessionId === String(past.id) && record.component === 'history')).toBe(false)
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(past.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'cannot-reach-deadline-target',
+      triggerTokens: 7_000,
+    }))
+    },
+  )
+
+  it.each(['balanced', 'adaptive'] as const)(
+    'audits below-profile-trigger in %s mode when the tool-result total sits under the History trigger',
+    async (profile) => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile,
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100_000,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId(`public-history-below-profile-trigger-${profile}`))
+    appendToolTurn(session, 1, 'small routine evidence', true)
+    session.append('turn/start', { turn: 2 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'below-profile-trigger',
+      triggerTokens: 100_000,
+    }))
+    },
+  )
+
+  it.each(['balanced', 'adaptive'] as const)(
+    'audits protected-working-set in %s mode when every safe candidate is inside the protected tail',
+    async (profile) => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile,
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 10,
+      historyKeepRecentTokens: 1_000_000,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId(`public-history-protected-working-set-${profile}`))
+    appendToolTurn(session, 1, 'protected working set evidence '.repeat(300), true)
+    appendToolTurn(session, 2, 'newest protected result '.repeat(300), true)
+    session.append('turn/start', { turn: 3 })
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(result.pruned).toHaveLength(0)
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'protected-working-set',
+    }))
+    },
+  )
+
+  it.each(['balanced', 'adaptive'] as const)(
+    'audits no-safe-candidates in %s mode when the only tool results are recovery-tool output',
+    async (profile) => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile,
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId(`public-history-no-safe-candidates-${profile}`))
+    // One ordinary turn (protected by nothing) plus one recovery-tool output:
+    // filtering only unsafe candidates leaves the ordinary result, so this
+    // first pass must NOT read as no-safe-candidates.
+    appendToolTurn(session, 1, 'ordinary reclaimable evidence '.repeat(300), true)
+    const turn = 2
+    const callId = CallId('recovery-call')
+    session.append('turn/start', { turn })
+    session.append('step/start', { turn, step: 1 })
+    session.append('assistant/message', {
+      turn,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: callId, name: 'context_compression_retrieve', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn, step: 1, callId, name: 'context_compression_retrieve', arguments: '{}' })
+    session.append('tool/result', {
+      turn,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'recovered original group '.repeat(300) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn, step: 1 })
+    session.append('turn/end', { turn, reason: { kind: 'completed' } })
+    session.append('turn/start', { turn: 3 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    // The ordinary result remains a safe candidate. Balanced commits it;
+    // Adaptive may reject its real plan on cost, but neither profile may
+    // misreport this mixed set as no-safe-candidates.
+    expect(audit.records().some(record => record.kind === 'component-evaluation'
+      && record.sessionId === String(session.id)
+      && record.component === 'history'
+      && record.reason === 'no-safe-candidates')).toBe(false)
+    if (profile === 'balanced') {
+      expect(rewrites(audit.records()).some(record =>
+        record.sessionId === String(session.id) && record.component === 'history')).toBe(true)
+    } else {
+      expect(audit.records()).toContainEqual(expect.objectContaining({
+        kind: 'component-evaluation',
+        sessionId: String(session.id),
+        component: 'history',
+        reason: 'adaptive-cost-rejected',
+      }))
+    }
+
+    const onlyUnsafe = Session.create(SessionId(`public-history-no-safe-candidates-only-${profile}`))
+    onlyUnsafe.append('turn/start', { turn: 1 })
+    onlyUnsafe.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+    })
+    onlyUnsafe.append('step/start', { turn: 1, step: 1 })
+    onlyUnsafe.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: callId, name: 'context_compression_retrieve', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    onlyUnsafe.append('tool/call', { turn: 1, step: 1, callId, name: 'context_compression_retrieve', arguments: '{}' })
+    onlyUnsafe.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'only recovery output lives here '.repeat(300) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    onlyUnsafe.append('step/end', { turn: 1, step: 1 })
+    onlyUnsafe.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    onlyUnsafe.append('turn/start', { turn: 2 })
+    ctx.toolResultPruner.pruneSession(onlyUnsafe, { stage: 'pressure' })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(onlyUnsafe.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'no-safe-candidates',
+    }))
+    },
+  )
+
+  it('audits adaptive-cost-rejected when the adaptive estimate refuses the batch', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'adaptive',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-history-adaptive-cost-rejected'))
+    appendToolTurn(session, 1, 'adaptive rejected evidence '.repeat(300), true)
+    appendToolTurn(session, 2, 'newest adaptive working-set evidence', true)
+    session.append('turn/start', { turn: 3 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'adaptive-cost-rejected',
+      historyMode: 'adaptive',
+    }))
+  })
+
+  it('preserves below-profile-trigger when Adaptive planning never forms a batch', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'adaptive',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100_000,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-history-adaptive-below-trigger'))
+    appendToolTurn(session, 1, 'small adaptive evidence', true)
+    session.append('turn/start', { turn: 2 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'below-profile-trigger',
+      historyMode: 'adaptive',
+      triggerTokens: 100_000,
+    }))
+  })
+
+  it('preserves exact-tokenizer-unavailable before Adaptive cost authority', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'adaptive',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-history-adaptive-exact-unavailable'))
+    appendToolTurn(
+      session,
+      1,
+      'unknown adaptive model evidence '.repeat(300),
+      true,
+      undefined,
+      'deepseek',
+      'unsupported-public-model',
+    )
+    session.append('turn/start', { turn: 2 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'exact-tokenizer-unavailable',
+      historyMode: 'adaptive',
+      measurementKind: 'unavailable',
+    }))
+  })
+
+  it('audits exact-tokenizer-unavailable for History when counts are not exact', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-history-exact-unavailable'))
+    appendToolTurn(session, 1, 'unknown model history evidence '.repeat(300), true, undefined, 'deepseek', 'unsupported-public-model')
+    session.append('turn/start', { turn: 2 })
+    ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'exact-tokenizer-unavailable',
+      measurementKind: 'unavailable',
+    }))
+  })
+
+  it('audits recovery-tool-unavailable when a committed batch cannot land without the recovery tool', async () => {
+    const ctx = new Context()
+    activeContexts.push(ctx)
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(TokenMeter)
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 100_000,
+      freshTargetTokens: 90_000,
+      aggregateTriggerTokens: 100_000,
+      aggregateTargetTokens: 90_000,
+      historyTriggerTokens: 100,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-history-recovery-tool-unavailable'))
+    // The newest result stays inside the protected tail; the older one plans a
+    // committed batch that cannot land without the recovery tool.
+    appendToolTurn(session, 1, 'committed batch without recovery tool '.repeat(300), true)
+    appendToolTurn(session, 2, 'newest protected result', true)
+    session.append('turn/start', { turn: 3 })
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+    expect(result.pruned).toHaveLength(0)
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'recovery-tool-unavailable',
+    }))
+  })
+
+  it('still commits unlinked Custom History batches at the minimum reclaim', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    // A protected token tail larger than the trigger leaves the linked-style
+    // whole-excess demand unreachable; Custom stays manual and must still
+    // commit once a batch passes its explicit minimum reclaim.
+    const custom = structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY) as CustomCompressionPolicy
+    if (custom.version !== 3) throw new Error('unlinked Custom fixture requires policy v3')
+    custom.fresh = { enabled: true, trigger: 1_000_000, target: 900_000 }
+    custom.aggregate = { enabled: true, trigger: 1_000_000, target: 900_000 }
+    custom.history = {
+      enabled: true,
+      trigger: 20_000,
+      keepRecentToolCalls: 2,
+      keepRecentTokens: 30_000,
+      minReclaim: 1_000,
+    }
+    custom.prefixPolicy = 'pressure-break'
+    custom.tailTrim = { enabled: false, trigger: 700_000 }
+    await ctx.settings.update(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE), {
+      profile: 'custom',
+      custom,
+    })
+    await ctx.plugin(ToolResultPruner, { profile: 'custom' }).await()
+
+    const session = Session.create(SessionId('public-custom-min-reclaim-commit'))
+    // Five results of ~14k tokens: the 30k token tail plus 2 newest calls
+    // protect the newest three, leaving two old results reclaimable.
+    appendToolTurn(session, 1, 'custom old reclaimable evidence '.repeat(3_000), true)
+    appendToolTurn(session, 2, 'custom old reclaimable evidence '.repeat(3_000), true)
+    appendToolTurn(session, 3, 'custom newer reclaimable evidence '.repeat(3_000), true)
+    appendToolTurn(session, 4, 'custom newer reclaimable evidence '.repeat(3_000), true)
+    appendToolTurn(session, 5, 'custom newest protected evidence '.repeat(3_000), true)
+    session.append('turn/start', { turn: 6 })
+
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(result.pruned.length).toBeGreaterThanOrEqual(1)
+    expect(rewrites(audit.records()).some(record =>
+      record.sessionId === String(session.id) && record.component === 'history')).toBe(true)
+  })
+
   it('distinguishes inactive and active History capacity-pressure from durable route capacity', async () => {
     const ctx = await runtimeContext()
     const audit = captureAudit(ctx)
@@ -490,7 +1467,7 @@ describe('standalone runtime on published Harness APIs', () => {
       freshTargetTokens: 90_000,
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
-      historyTriggerTokens: 40,
+      historyTriggerTokens: 400,
       historyKeepRecentToolCalls: 0,
       historyKeepRecentTokens: 1,
       historyMinReclaimTokens: 1,
@@ -514,7 +1491,7 @@ describe('standalone runtime on published Harness APIs', () => {
       sessionId: String(belowCapacityGate.id),
       component: 'history',
       status: 'skipped',
-      reason: 'capacity-pressure-inactive',
+      reason: 'below-micro-deadline',
       historyMode: 'capacity-pressure',
     }))
 
@@ -555,7 +1532,7 @@ describe('standalone runtime on published Harness APIs', () => {
       freshTargetTokens: 90_000,
       aggregateTriggerTokens: 100_000,
       aggregateTargetTokens: 90_000,
-      historyTriggerTokens: 40,
+      historyTriggerTokens: 400,
       historyKeepRecentToolCalls: 0,
       historyKeepRecentTokens: 1,
       historyMinReclaimTokens: 1,
@@ -568,10 +1545,13 @@ describe('standalone runtime on published Harness APIs', () => {
     const { session } = agent
     appendToolTurn(session, 1, 'old capacity-pressure evidence '.repeat(600), true)
     appendToolTurn(session, 2, 'newest protected result', true)
+    const boundaryTotal = measureForCompaction(ctx, session).totalTokens
     session.append('request/context', {
       provider: 'deepseek',
       model: MODEL,
-      contextWindow: 100,
+      // Just under the frozen 80% deadline D = 0.7 * window, so the gate is
+      // active while the reclaim target stays reachable for one old result.
+      contextWindow: Math.floor(boundaryTotal / 0.72),
     })
 
     agent.followup(createUserMessage({
@@ -1054,7 +2034,11 @@ describe('standalone runtime on published Harness APIs', () => {
     policy.aggregate = { enabled: true, trigger: 1_000, target: 400 }
     policy.history = {
       enabled: true,
-      trigger: 40,
+      // The strict required-reclaim gate demands one batch pull tool tokens
+      // back under this trigger: it must sit above the large protected tail
+      // (so the batch is reachable) while the residual total stays far above
+      // the auto-compact threshold (half the measured total) afterwards.
+      trigger: 7_800,
       keepRecentToolCalls: 0,
       keepRecentTokens: 1,
       minReclaim: 1,
@@ -1092,7 +2076,7 @@ describe('standalone runtime on published Harness APIs', () => {
     // Leave one old, still-original result for the pressure-stage History
     // reducer, then add a newer working-set result that remains protected.
     appendToolTurn(session, 3, 'history full pipeline '.repeat(600), true, 'run History')
-    appendToolTurn(session, 4, 'recent working set', true, 'retain recent context')
+    appendToolTurn(session, 4, 'recent protected working-set context '.repeat(1200), true, 'retain recent context')
     session.append('turn/start', { turn: 5 })
     ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
 
@@ -1140,5 +2124,408 @@ describe('standalone runtime on published Harness APIs', () => {
     expect(records.findIndex(record => record.kind === 'native-auto-compact'))
       .toBeGreaterThan(firstIndex('tail-trim'))
     expect(session.events.some(event => event.type === ('compaction/group-trim' as string))).toBe(false)
+  })
+
+  it('compresses text tool results exactly in a vision session that also carries a user image', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 1_000_000,
+      freshTargetTokens: 900_000,
+      aggregateTriggerTokens: 100,
+      aggregateTargetTokens: 64,
+      historyTriggerTokens: 600,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-vision-text-session'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    session.append('user/message', createUserMessage({
+      content: [
+        imageBlock(640, 480),
+        { type: 'text', text: 'describe the attachment and run the tools' },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('vision-call-1'), name: 'bash', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: VISION_MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn: 1, step: 1, callId: CallId('vision-call-1'), name: 'bash', arguments: '{}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('vision-call-1'),
+        content: [{ type: 'text', text: 'vision fresh evidence '.repeat(1_000) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    // One older text result outside the fresh coordinates keeps History above
+    // its trigger after Fresh has already shrunk the turn-1 result.
+    appendToolTurn(session, 2, 'vision history evidence '.repeat(300), true, undefined, 'deepseek', VISION_MODEL)
+    appendToolTurn(session, 3, 'recent protected result', true, undefined, 'deepseek', VISION_MODEL)
+    session.append('turn/start', { turn: 4 })
+
+    const fresh = ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    const pressure = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(fresh.pruned).toHaveLength(1)
+    expect(pressure.pruned.length).toBeGreaterThanOrEqual(1)
+    const visionRewrites = rewrites(audit.records())
+      .filter(record => record.sessionId === String(session.id))
+    expect(visionRewrites.length).toBeGreaterThanOrEqual(2)
+    for (const record of visionRewrites) {
+      expect(record.tokenizerId).toBe('deepseek-ai/DeepSeek-V4-Flash-Vision-Exp')
+      expect(record.tokenizerRevision).toBe('6821d6ad3681a4b137b066b76094fa82ebd0a380')
+    }
+    // Fresh is disabled by its trigger; Aggregate is the pre-compression stage
+    // that lands on the vision route for the oversized new result.
+    expect(visionRewrites.some(record => record.component === 'fresh')).toBe(false)
+    expect(visionRewrites.some(record => record.component === 'aggregate')).toBe(true)
+    expect(visionRewrites.some(record => record.component === 'history')).toBe(true)
+  })
+
+  it('keeps an image-bearing tool result fail-open in a vision session', async () => {
+    const ctx = await runtimeContext()
+    const audit = captureAudit(ctx)
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 10,
+      freshTargetTokens: 8,
+      aggregateTriggerTokens: 10,
+      aggregateTargetTokens: 8,
+      historyTriggerTokens: 10,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-vision-image-tool-result'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('vision-image-call'), name: 'screenshot', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: VISION_MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn: 1, step: 1, callId: CallId('vision-image-call'), name: 'screenshot', arguments: '{}' })
+    const imageResult = session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('vision-image-call'),
+        content: [
+          { type: 'text', text: 'screenshot captured' },
+          imageBlock(800, 600),
+        ],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    session.append('turn/start', { turn: 2 })
+
+    const fresh = ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    const pressure = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(fresh.pruned).toHaveLength(0)
+    expect(pressure.pruned).toHaveLength(0)
+    // The original image-bearing result stays on the surface untouched.
+    const original = session.events[imageResult.seq]
+    expect(original?.type).toBe('tool/result')
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'fresh',
+      status: 'skipped',
+      reason: 'exact-tokenizer-unavailable',
+    }))
+    expect(audit.records()).toContainEqual(expect.objectContaining({
+      kind: 'component-evaluation',
+      sessionId: String(session.id),
+      component: 'history',
+      status: 'skipped',
+      reason: 'exact-tokenizer-unavailable',
+    }))
+  })
+
+  it('counts image nodes as estimates while retaining exact text-only siblings', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-vision-image-surface'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'look at this' },
+        imageBlock(640, 480),
+        { type: 'text', text: 'and describe it' },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const textOnly = session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'still exactly measurable' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    // The exact request expansion is not publicly verifiable, so a mixed
+    // text/image node carries a bounded estimate and cannot authorize an exact
+    // rewrite proof.
+    const node = view.measuredNodes.find(entry => entry.seq === userMessage.seq)
+    expect(node?.count).toMatchObject({
+      kind: 'tokenizer-estimate',
+      estimatorId: DEEPSEEK_VISION_IMAGE_ESTIMATOR.id,
+      estimatorRevision: DEEPSEEK_VISION_IMAGE_ESTIMATOR.revision,
+    })
+    if (node?.count.kind !== 'tokenizer-estimate') throw new Error('image node must carry an estimate')
+    expect(node.count.upperBoundTokens).toBeGreaterThanOrEqual(node.count.tokens)
+    expect(view.currentSurface.kind).toBe('tokenizer-estimate')
+    // Text-only siblings keep their exact counts.
+    expect(view.measuredNodes.find(entry => entry.seq === textOnly.seq)?.count).toMatchObject({
+      kind: 'exact-tokenizer',
+      tokenizerId: 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp',
+    })
+    // The official arithmetic is attached as an INTRINSIC diagnostic (the
+    // padding extremes on intrinsic dimensions), explicitly not a request
+    // bound: the adapter may still re-project the image.
+    const grid = deepSeekVisionImageGrid(640, 480)
+    expect(node.intrinsicImageBlockEstimate).toMatchObject({
+      paddingMinimumTokens: deepSeekVisionImageBlockTokens(grid.nLlmH, grid.nLlmW, 3),
+      paddingMaximumTokens: deepSeekVisionImageBlockTokens(grid.nLlmH, grid.nLlmW, 0),
+    })
+    expect(view.intrinsicImageBlockEstimateTokens).toBe(node.intrinsicImageBlockEstimate?.paddingMinimumTokens)
+  })
+
+  it('estimates over-budget image metadata instead of making the surface unavailable', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-vision-image-over-budget'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [imageBlock(4096, 4096)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    const node = view.measuredNodes.find(entry => entry.seq === userMessage.seq)
+    expect(node?.count).toMatchObject({
+      kind: 'tokenizer-estimate',
+      upperBoundTokens: DEEPSEEK_VISION_PROJECTION.visionMaxNTokens,
+    })
+    expect(view.currentSurface.kind).toBe('tokenizer-estimate')
+  })
+
+  it('keeps empty content nodes exact instead of fail-opening the surface', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-empty-content-node'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+    })
+    const empty = session.append('user/message', createUserMessage({
+      content: [],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const present = session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'still measurable' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    expect(view.measuredNodes.find(node => node.seq === empty.seq)?.count).toMatchObject({
+      kind: 'exact-tokenizer',
+      tokens: 0,
+    })
+    expect(view.measuredNodes.find(node => node.seq === present.seq)?.count).toMatchObject({
+      kind: 'exact-tokenizer',
+    })
+    expect(view.currentSurface.kind).toBe('exact-tokenizer')
+  })
+
+  it('uses the fixed image-token fallback for malformed metadata', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-vision-image-malformed-dims'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [imageBlock(640.5, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const zeroSize = session.append('user/message', createUserMessage({
+      content: [imageBlock(0, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    expect(view.measuredNodes.find(node => node.seq === userMessage.seq)?.count).toEqual({
+      kind: 'tokenizer-estimate',
+      tokens: DEEPSEEK_VISION_DEFAULT_IMAGE_TOKENS,
+      upperBoundTokens: DEEPSEEK_VISION_PROJECTION.visionMaxNTokens,
+      estimatorId: DEEPSEEK_VISION_IMAGE_ESTIMATOR.id,
+      estimatorRevision: DEEPSEEK_VISION_IMAGE_ESTIMATOR.revision,
+    })
+    expect(view.measuredNodes.find(node => node.seq === zeroSize.seq)?.count).toEqual({
+      kind: 'tokenizer-estimate',
+      tokens: DEEPSEEK_VISION_DEFAULT_IMAGE_TOKENS,
+      upperBoundTokens: DEEPSEEK_VISION_PROJECTION.visionMaxNTokens,
+      estimatorId: DEEPSEEK_VISION_IMAGE_ESTIMATOR.id,
+      estimatorRevision: DEEPSEEK_VISION_IMAGE_ESTIMATOR.revision,
+    })
+    expect(view.currentSurface).toMatchObject({
+      kind: 'tokenizer-estimate',
+      tokens: DEEPSEEK_VISION_DEFAULT_IMAGE_TOKENS * 2,
+      upperBoundTokens: DEEPSEEK_VISION_PROJECTION.visionMaxNTokens * 2,
+    })
+  })
+
+  it('keeps image content unavailable for non-vision models', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-text-model-image-node'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: MODEL } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [imageBlock(640, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    expect(view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count).toMatchObject({
+      kind: 'unavailable',
+    })
+  })
+
+  it('keeps the vision image estimator unavailable behind a foreign provider', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-foreign-provider-vision-image-node'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'openai', model: VISION_MODEL } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [imageBlock(640, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    expect(view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count).toMatchObject({
+      kind: 'unavailable',
+    })
+    expect(view.currentSurface).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it('never TailTrims a tool group whose results carry images', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(TestSettings).await()
+    await ctx.plugin(SelectorHost).await()
+    const audit = captureAudit(ctx)
+    await ctx.settings.update(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE), {
+      profile: 'custom',
+      custom: {
+        version: 3,
+        unit: 'tokens',
+        fresh: { enabled: true, trigger: 1_000_000, target: 900_000 },
+        aggregate: { enabled: true, trigger: 1_000_000, target: 900_000 },
+        history: { enabled: false, trigger: 900_000, keepRecentToolCalls: 0, keepRecentTokens: 0, minReclaim: 1 },
+        prefixPolicy: 'preserve',
+        tailTrim: { enabled: true, trigger: 10 },
+      },
+    })
+    await ctx.plugin(ToolResultPruner, { profile: 'custom' }).await()
+    const session = Session.create(SessionId('public-vision-tailtrim-image-group'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: VISION_MODEL } }),
+    })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('vision-tailtrim-call'), name: 'screenshot', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: VISION_MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn: 1, step: 1, callId: CallId('vision-tailtrim-call'), name: 'screenshot', arguments: '{}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('vision-tailtrim-call'),
+        content: [
+          { type: 'text', text: 'screenshot captured for tail trim' },
+          imageBlock(320, 240),
+        ],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    session.append('turn/start', { turn: 2 })
+
+    const result = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(result.pruned).toHaveLength(0)
+    expect(rewrites(audit.records()).some(record =>
+      record.sessionId === String(session.id) && record.component === 'tail-trim')).toBe(false)
+    expect(session.events.some(event =>
+      event.type === 'tool/result'
+      && event.data.message.content.some(block => block.type === 'tool-result'
+        && block.content.some(inner => inner.type === 'image')))).toBe(true)
+    // Either fail-open gate is acceptable: the protected-set scan refuses the
+    // image-bearing candidate, and the group scan independently refuses it.
+    const tailTrimSkips = audit.records().filter((record): record is Extract<CompressionAuditRecord, { kind: 'component-evaluation' }> =>
+      record.kind === 'component-evaluation'
+      && record.sessionId === String(session.id)
+      && record.component === 'tail-trim'
+      && record.status === 'skipped')
+    expect(tailTrimSkips.length).toBeGreaterThan(0)
+    expect(tailTrimSkips.every(record =>
+      record.reason === 'no-safe-eligible-tool-group'
+      || record.reason === 'exact-tokenizer-unavailable-in-protected-set'
+      || record.reason === 'exact-tokenizer-unavailable')).toBe(true)
   })
 })

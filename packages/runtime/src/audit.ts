@@ -31,8 +31,40 @@ interface CompressionAuditBase {
 export interface CompressionPolicyFrozenAuditRecord extends CompressionAuditBase {
   readonly kind: 'policy-frozen'
   readonly settingsSource: 'host-settings' | 'plugin-config-fallback'
+  /** Where the frozen Auto Compact threshold came from. */
+  readonly autoCompactThresholdSource?: 'generation-config' | 'host-settings' | 'schema-default'
+  /** Present when the stored document was invalid and the session froze losslessly. */
+  readonly settingsInvalidFallback?: 'lossless-off'
   readonly settings: ContextCompressionSettings
   readonly deploymentConfig: ResolvedConfig
+}
+
+/** Routed request facts captured alongside one policy resolution. */
+export interface CompressionRouteAuditFact {
+  readonly provider: string
+  readonly model: string
+  readonly modality?: string
+}
+
+/** Bundled tokenizer identity backing exact counts for one route. */
+export interface CompressionTokenizerAuditFact {
+  readonly repository: string
+  readonly revision: string
+}
+
+/** How the resolved History watermarks were derived for one Session. */
+export interface CompressionCoordinationAuditFact {
+  /** Frozen Auto Compact threshold percent from the settings snapshot. */
+  readonly thresholdPercent: number
+  /** `A = floor(C × a)`; undefined when linkage did not resolve. */
+  readonly autoCompactTokens?: number
+  /** `D = floor(A × 0.875)`; undefined when linkage did not resolve. */
+  readonly microDeadlineTokens?: number
+  /**
+   * Whether History follows the Auto Compact watermark, explicit deployment
+   * overrides, a mix of both, Custom manual tokens, or the fixed preset.
+   */
+  readonly paramSource: 'auto-compact-linked' | 'deployment-override' | 'mixed' | 'custom-manual' | 'fixed-preset'
 }
 
 /** One effective policy resolution, including context-percent capacity when used. */
@@ -40,6 +72,9 @@ export interface CompressionPolicyResolvedAuditRecord extends CompressionAuditBa
   readonly kind: 'policy-resolved'
   readonly policy: CompressionPolicy
   readonly contextWindowTokens?: number
+  readonly coordination?: CompressionCoordinationAuditFact
+  readonly route?: CompressionRouteAuditFact
+  readonly tokenizer?: CompressionTokenizerAuditFact
 }
 
 /** One committed model-free surface rewrite and its exact token accounting. */
@@ -74,6 +109,10 @@ export interface CompressionComponentEvaluationAuditRecord extends CompressionAu
   readonly currentTokens?: number
   readonly triggerTokens?: number
   readonly targetTokens?: number
+  /** Reclaim the planned batch reached (insufficient-reclaim family only). */
+  readonly reclaimTokens?: number
+  /** Reclaim the batch required (insufficient-reclaim family only). */
+  readonly requiredTokens?: number
 }
 
 /** One fail-open runtime error, without prompt or tool-result content. */

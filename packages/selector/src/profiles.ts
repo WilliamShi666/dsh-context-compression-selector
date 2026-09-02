@@ -94,12 +94,62 @@ export const DEFAULT_CUSTOM_COMPRESSION_POLICY: CustomCompressionPolicyV3 = {
   tailTrim: { enabled: false, trigger: 700_000 },
 }
 
+/** User-tunable Auto Compact coordination preferences. */
+export interface AutoCompactSettings {
+  thresholdPercent: number
+}
+
+/**
+ * The one threshold contract shared by the UI, the persisted settings, and the
+ * runtime resolver; mirrored browser-safe from the runtime package.
+ */
+export const AUTO_COMPACT_THRESHOLD_LIMITS = Object.freeze({
+  min: 50,
+  max: 90,
+  step: 1,
+  default: 80,
+} as const)
+
+/** Narrow one unknown value to a valid Auto Compact threshold percent. */
+export function isValidAutoCompactThresholdPercent(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= AUTO_COMPACT_THRESHOLD_LIMITS.min
+    && value <= AUTO_COMPACT_THRESHOLD_LIMITS.max
+}
+
+/** Accept JSON-object records while rejecting class instances and exotic prototypes. */
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value) as object | null
+  return prototype === Object.prototype || prototype === null
+}
+
+/**
+ * Decode the persisted autoCompact section with exactly the runtime schema's
+ * strictness: absent means the 80% default; present values must be a plain
+ * object carrying only a valid `thresholdPercent`. Anything else is invalid,
+ * never silently coerced.
+ */
+export function decodeAutoCompactSettings(value: unknown): AutoCompactSettings | undefined {
+  if (value === undefined) return { thresholdPercent: AUTO_COMPACT_THRESHOLD_LIMITS.default }
+  if (!isPlainRecord(value)) return undefined
+  const keys = Object.keys(value)
+  if (keys.length !== 1 || keys[0] !== 'thresholdPercent') return undefined
+  const thresholdPercent = (value as Record<string, unknown>).thresholdPercent
+  return isValidAutoCompactThresholdPercent(thresholdPercent)
+    ? { thresholdPercent }
+    : undefined
+}
+
 /** Durable settings section owned by this package. */
 export interface ContextCompressionSettings {
   /** Default profile captured when each Session first reaches the pruner. */
   profile: CompressionProfile
   /** Complete canonical policy captured with `profile` when the runtime first observes a Session. */
   custom: CustomCompressionPolicy
+  /** Auto Compact trigger captured with `profile` when the runtime first observes a Session. */
+  autoCompact: AutoCompactSettings
 }
 
 /**
@@ -170,8 +220,34 @@ function isBudget(value: unknown): value is CustomCompressionBudget {
     && typeof value.target === 'number'
 }
 
+/**
+ * Canonicalize one validated Custom document to version 3, mirroring the
+ * runtime's `canonicalizeCustomPolicy` exactly so the browser and runtime
+ * boundaries hand the SAME complete document to the UI and the policy
+ * resolver: legacy v1/v2 History working sets upgrade to the 10-call default,
+ * and a v1 document gains the default-disabled TailTrim stage.
+ */
+export function canonicalizeCustomPolicy(policy: CustomCompressionPolicy): CustomCompressionPolicyV3 {
+  if (policy.version === 3) return structuredClone(policy)
+  return {
+    version: 3,
+    unit: policy.unit,
+    fresh: structuredClone(policy.fresh),
+    aggregate: structuredClone(policy.aggregate),
+    history: {
+      enabled: policy.history.enabled,
+      trigger: policy.history.trigger,
+      keepRecentToolCalls: 10,
+      keepRecentTokens: policy.history.keepRecent,
+      minReclaim: policy.history.minReclaim,
+    },
+    prefixPolicy: policy.prefixPolicy,
+    tailTrim: policy.version === 1 ? { enabled: false, trigger: 700_000 } : structuredClone(policy.tailTrim),
+  }
+}
+
 function hasExactKeys(value: unknown, expected: readonly string[]): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  if (!isPlainRecord(value)) return false
   const keys = Object.keys(value)
   return keys.length === expected.length && keys.every(key => expected.includes(key))
 }

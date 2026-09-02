@@ -1,0 +1,106 @@
+{
+  "generator": "tokenizers 0.22.2 on Darwin",
+  "revision": "1",
+  "tokenizers": {
+    "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": "6821d6ad3681a4b137b066b76094fa82ebd0a380",
+    "deepseek-ai/DeepSeek-V4-Pro": "0e1a0e5e52aea73055f50fef6f2423db370265b6"
+  },
+  "cases": [
+    {
+      "label": "english prose",
+      "text": "The quick brown fox jumps over the lazy dog.",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 10,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 10
+      }
+    },
+    {
+      "label": "simplified chinese",
+      "text": "上下文压缩选择器在长任务中回收工具结果 token。",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 13,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 13
+      }
+    },
+    {
+      "label": "mixed zh-en",
+      "text": "DeepSeek Harness 的 tool result 压缩,Fresh/Aggregate/History 三个阶段。",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 21,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 21
+      }
+    },
+    {
+      "label": "json tool output",
+      "text": "{\"status\":\"ok\",\"items\":[{\"id\":1,\"path\":\"/tmp/a.txt\"}],\"count\":1}",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 24,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 24
+      }
+    },
+    {
+      "label": "python code",
+      "text": "def solve(width: int, height: int) -> int:\n    return width * height // 2\n",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 22,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 22
+      }
+    },
+    {
+      "label": "shell transcript",
+      "text": "$ pnpm run test\n> vitest run\n\n Test Files  12 passed (12)\n",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 19,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 19
+      }
+    },
+    {
+      "label": "unicode whitespace",
+      "text": "line1\nline2\r\nline3\tline4  double  spaces",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 16,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 16
+      }
+    },
+    {
+      "label": "deepseek chat special tokens",
+      "text": "<｜begin▁of▁sentence｜><｜User｜>hello<｜Assistant｜><think>\n",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 6,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 6
+      }
+    },
+    {
+      "label": "vision image placeholder",
+      "text": "before<｜deepseek_image｜>after",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 9,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 3
+      }
+    },
+    {
+      "label": "empty string",
+      "text": "",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 0,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 0
+      }
+    },
+    {
+      "label": "single ascii char",
+      "text": "a",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 1,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 1
+      }
+    },
+    {
+      "label": "emoji",
+      "text": "compression 🧠✅ done",
+      "counts": {
+        "deepseek-ai/DeepSeek-V4-Pro": 7,
+        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 7
+      }
+    }
+  ]
+}

@@ -1,0 +1,459 @@
+{
+  "source": {
+    "repository": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+    "revision": "6821d6ad3681a4b137b066b76094fa82ebd0a380",
+    "files": [
+      "inference/image_processor.py",
+      "config.json"
+    ]
+  },
+  "parameters": {
+    "visionPatchSize": 14,
+    "visionDownsampleRatio": 3,
+    "visionMaxNTokens": 384,
+    "visionMinPixels": 147456,
+    "visionMaxWhRatio": 8
+  },
+  "singleImages": [
+    {
+      "width": 14,
+      "height": 14,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 28,
+      "height": 14,
+      "startTokenPos": 0,
+      "nLlmH": 7,
+      "nLlmW": 13,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 56,
+      "height": 56,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 100,
+      "height": 100,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 224,
+      "height": 224,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 240,
+      "height": 180,
+      "startTokenPos": 0,
+      "nLlmH": 8,
+      "nLlmW": 11,
+      "tokensAtStart0": 101
+    },
+    {
+      "width": 180,
+      "height": 240,
+      "startTokenPos": 0,
+      "nLlmH": 11,
+      "nLlmW": 8,
+      "tokensAtStart0": 113
+    },
+    {
+      "width": 384,
+      "height": 384,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 512,
+      "height": 384,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 13,
+      "tokensAtStart0": 145
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 0,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokensAtStart0": 209
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "startTokenPos": 0,
+      "nLlmH": 15,
+      "nLlmW": 20,
+      "tokensAtStart0": 341
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "startTokenPos": 0,
+      "nLlmH": 16,
+      "nLlmW": 21,
+      "tokensAtStart0": 357
+    },
+    {
+      "width": 768,
+      "height": 1024,
+      "startTokenPos": 0,
+      "nLlmH": 20,
+      "nLlmW": 15,
+      "tokensAtStart0": 325
+    },
+    {
+      "width": 1280,
+      "height": 960,
+      "startTokenPos": 0,
+      "nLlmH": 16,
+      "nLlmW": 21,
+      "tokensAtStart0": 357
+    },
+    {
+      "width": 1600,
+      "height": 1200,
+      "startTokenPos": 0,
+      "nLlmH": 16,
+      "nLlmW": 21,
+      "tokensAtStart0": 357
+    },
+    {
+      "width": 2048,
+      "height": 1536,
+      "startTokenPos": 0,
+      "nLlmH": 16,
+      "nLlmW": 21,
+      "tokensAtStart0": 357
+    },
+    {
+      "width": 2000,
+      "height": 2000,
+      "startTokenPos": 0,
+      "nLlmH": 18,
+      "nLlmW": 18,
+      "tokensAtStart0": 349
+    },
+    {
+      "width": 4096,
+      "height": 4096,
+      "startTokenPos": 0,
+      "nLlmH": 18,
+      "nLlmW": 18,
+      "tokensAtStart0": 349
+    },
+    {
+      "width": 8,
+      "height": 8,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 4,
+      "height": 400,
+      "startTokenPos": 0,
+      "nLlmH": 92,
+      "nLlmW": 1,
+      "tokensAtStart0": 189
+    },
+    {
+      "width": 400,
+      "height": 4,
+      "startTokenPos": 0,
+      "nLlmH": 4,
+      "nLlmW": 26,
+      "tokensAtStart0": 113
+    },
+    {
+      "width": 64,
+      "height": 512,
+      "startTokenPos": 0,
+      "nLlmH": 26,
+      "nLlmW": 4,
+      "tokensAtStart0": 137
+    },
+    {
+      "width": 1152,
+      "height": 128,
+      "startTokenPos": 0,
+      "nLlmH": 4,
+      "nLlmW": 26,
+      "tokensAtStart0": 113
+    },
+    {
+      "width": 1024,
+      "height": 119,
+      "startTokenPos": 0,
+      "nLlmH": 4,
+      "nLlmW": 26,
+      "tokensAtStart0": 113
+    },
+    {
+      "width": 4200,
+      "height": 100,
+      "startTokenPos": 0,
+      "nLlmH": 4,
+      "nLlmW": 26,
+      "tokensAtStart0": 113
+    },
+    {
+      "width": 100,
+      "height": 4200,
+      "startTokenPos": 0,
+      "nLlmH": 84,
+      "nLlmW": 2,
+      "tokensAtStart0": 257
+    },
+    {
+      "width": 147,
+      "height": 147,
+      "startTokenPos": 0,
+      "nLlmH": 10,
+      "nLlmW": 10,
+      "tokensAtStart0": 117
+    },
+    {
+      "width": 1414,
+      "height": 1414,
+      "startTokenPos": 0,
+      "nLlmH": 18,
+      "nLlmW": 18,
+      "tokensAtStart0": 349
+    }
+  ],
+  "startPositions": [
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 0,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 209
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 1,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 208
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 2,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 207
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 3,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 206
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 4,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 209
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 5,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 208
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 7,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 206
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 8,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 209
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 17,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 208
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 64,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 209
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 101,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 208
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 383,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 206
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 384,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 209
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 766,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 207
+    },
+    {
+      "width": 640,
+      "height": 480,
+      "startTokenPos": 767,
+      "nLlmH": 12,
+      "nLlmW": 16,
+      "tokens": 206
+    }
+  ],
+  "sequences": [
+    {
+      "entries": [
+        {
+          "width": 640,
+          "height": 480,
+          "startTokenPos": 3,
+          "nLlmH": 12,
+          "nLlmW": 16,
+          "tokens": 206
+        },
+        {
+          "width": 800,
+          "height": 600,
+          "startTokenPos": 209,
+          "nLlmH": 15,
+          "nLlmW": 20,
+          "tokens": 340
+        },
+        {
+          "width": 1024,
+          "height": 768,
+          "startTokenPos": 549,
+          "nLlmH": 16,
+          "nLlmW": 21,
+          "tokens": 356
+        }
+      ]
+    },
+    {
+      "entries": [
+        {
+          "width": 2048,
+          "height": 1536,
+          "startTokenPos": 3,
+          "nLlmH": 16,
+          "nLlmW": 21,
+          "tokens": 354
+        },
+        {
+          "width": 147,
+          "height": 147,
+          "startTokenPos": 357,
+          "nLlmH": 10,
+          "nLlmW": 10,
+          "tokens": 116
+        },
+        {
+          "width": 4096,
+          "height": 4096,
+          "startTokenPos": 473,
+          "nLlmH": 18,
+          "nLlmW": 18,
+          "tokens": 348
+        }
+      ]
+    },
+    {
+      "entries": [
+        {
+          "width": 64,
+          "height": 512,
+          "startTokenPos": 3,
+          "nLlmH": 26,
+          "nLlmW": 4,
+          "tokens": 134
+        },
+        {
+          "width": 1152,
+          "height": 128,
+          "startTokenPos": 137,
+          "nLlmH": 4,
+          "nLlmW": 26,
+          "tokens": 112
+        },
+        {
+          "width": 4200,
+          "height": 100,
+          "startTokenPos": 249,
+          "nLlmH": 4,
+          "nLlmW": 26,
+          "tokens": 112
+        },
+        {
+          "width": 100,
+          "height": 4200,
+          "startTokenPos": 361,
+          "nLlmH": 84,
+          "nLlmW": 2,
+          "tokens": 256
+        }
+      ]
+    }
+  ]
+}

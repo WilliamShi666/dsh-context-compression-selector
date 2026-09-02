@@ -5,6 +5,7 @@ import {
   isCustomCompressionPolicy,
 } from '../src/profiles.ts'
 import { apply } from '../src/client/index.ts'
+import { decodeSettings } from '../src/client/decode.ts'
 import type {
   CompressionSelectorInjected,
   ContextCompressionSettings,
@@ -62,6 +63,18 @@ describe('context compression browser contract', () => {
     })).toBe(false)
   })
 
+  it('decodes legacy settings to the default threshold and rejects malformed sections', async () => {
+    // Legacy documents stored before autoCompact existed inherit 80%.
+    const legacy = decodeSettings({ profile: 'balanced', custom: structuredClone(CUSTOM) })
+    expect(legacy).toMatchObject({ autoCompact: { thresholdPercent: 80 } })
+    // A present-but-invalid threshold fails the whole decode.
+    expect(decodeSettings({
+      profile: 'balanced',
+      custom: structuredClone(CUSTOM),
+      autoCompact: { thresholdPercent: 91 },
+    })).toBeUndefined()
+  })
+
   it('reports a recovered no-op write only on the selector boundary', async () => {
     let revision = 7
     let commit = false
@@ -72,6 +85,7 @@ describe('context compression browser contract', () => {
     let value: ContextCompressionSettings = {
       profile: 'balanced',
       custom: structuredClone(CUSTOM),
+      autoCompact: { thresholdPercent: 80 },
     }
     const snapshot = (): SettingsScopeSnapshot<ContextCompressionSettings> => ({
       status: 'ready',
@@ -174,5 +188,14 @@ describe('context compression browser contract', () => {
     await expect(actions.resetCustom()).resolves.toBeUndefined()
     expect(scope.set).toHaveBeenLastCalledWith('custom', DEFAULT_CUSTOM_COMPRESSION_POLICY)
     expect(scope.unset).not.toHaveBeenCalled()
+
+    // The Auto Compact threshold shares the same confirm-on-write boundary:
+    // committed writes resolve, and a silent host drop rejects.
+    commit = false
+    await expect(actions.saveAutoCompact(73)).rejects.toThrow('were not saved')
+    commit = true
+    await expect(actions.saveAutoCompact(73)).resolves.toBeUndefined()
+    expect(scope.set).toHaveBeenLastCalledWith('autoCompact', { thresholdPercent: 73 })
+    expect(value.autoCompact).toEqual({ thresholdPercent: 73 })
   })
 })

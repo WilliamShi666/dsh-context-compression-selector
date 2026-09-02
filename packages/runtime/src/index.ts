@@ -25,6 +25,7 @@ import type {
   TokenCount,
 } from './measurement.ts'
 import { measureForCompaction } from './measurement.ts'
+import { deepSeekV4TokenizerForModel } from './deepseek-v4-tokenizer.ts'
 import { countExactCanonicalTextFields } from './token-count.ts'
 import type {} from '@deepseek-ai/dsh-tools'
 import {
@@ -37,6 +38,7 @@ import {
   codePointLength,
   CONTEXT_COMPRESSION_SETTINGS_NAMESPACE,
   ContextCompressionSettingsSchema,
+  parseContextCompressionSettings,
   DEFAULTS,
   PRUNE_MARKER,
   resolveConfig,
@@ -78,8 +80,11 @@ export {
   codePointLength,
   CONTEXT_COMPRESSION_SETTINGS_NAMESPACE,
   ContextCompressionSettingsSchema,
+  parseContextCompressionSettings,
+  AUTO_COMPACT_THRESHOLD_LIMITS,
   DEFAULTS,
   isCompressionProfile,
+  isValidAutoCompactThresholdPercent,
   PRUNE_MARKER,
   resolveConfig,
   resolvePolicy,
@@ -91,7 +96,13 @@ export {
 } from './custom-policy.ts'
 export type { CustomPolicyResolutionOptions } from './custom-policy.ts'
 export { historicalPlaceholder, normalizeTerminalText, reduceFreshToolResult, verifyReduction } from './reducers.ts'
+export { measureForCompaction } from './measurement.ts'
 export type {
+  CompactionTokenView,
+  MeasuredTokenSurfaceNode,
+} from './measurement.ts'
+export type {
+  AutoCompactSettings,
   CompressionPolicy,
   CompressionProfile,
   CustomCompressionBudget,
@@ -155,6 +166,21 @@ interface PlannedReplacement {
   readonly tokenizerRevision: string
 }
 
+/**
+ * Discriminated History planning outcome: every skip path carries its own
+ * reason instead of collapsing into one merged "no eligible minimum reclaim"
+ * audit, so operators can tell a protected working set from missing exact
+ * counts or an unreachable reclaim target.
+ */
+type HistoryPlanOutcome =
+  | { readonly kind: 'planned', readonly plans: PlannedReplacement[] }
+  | { readonly kind: 'exact-tokenizer-unavailable' }
+  | { readonly kind: 'below-profile-trigger' }
+  | { readonly kind: 'no-safe-candidates' }
+  | { readonly kind: 'protected-working-set' }
+  | { readonly kind: 'insufficient-reclaim', readonly reclaim: number, readonly required: number }
+  | { readonly kind: 'cannot-reach-deadline-target', readonly reclaim: number, readonly required: number }
+
 const RICH_BLOCK_PRESSURE_COST = 256
 /** Routed-context utilization required before capacity-pressure History may age sent history. */
 const CAPACITY_PRESSURE_RATIO = 0.7
@@ -177,6 +203,7 @@ export class ToolResultPruner extends Service {
     historyKeepRecentToolCalls: z.number().step(1).min(0).required(false),
     historyKeepRecentTokens: z.number().step(1).min(0).required(false),
     historyMinReclaimTokens: z.number().step(1).min(1).required(false),
+    autoCompactThresholdPercent: z.number().step(1).min(50).max(90).required(false),
   })
 
   /** Resolved immutable deployment configuration. */
@@ -193,8 +220,8 @@ export class ToolResultPruner extends Service {
   private readonly activeRequestBoundaries = new WeakMap<Session, object>()
   /** Boundary identity that already attempted one fully preflighted TailTrim publication. */
   private readonly tailTrimBoundaryAttempts = new WeakMap<Session, object>()
-  /** Distinct effective policy audit keys already emitted for each Session. */
-  private readonly policyResolutionAudits = new WeakMap<Session, Set<string>>()
+  /** Last effective policy audit key emitted for each Session. */
+  private readonly policyResolutionAudits = new WeakMap<Session, string>()
 
   constructor(ctx: Context, config: ToolResultPruneConfig = {}) {
     super(ctx, 'toolResultPruner')
@@ -322,7 +349,11 @@ export class ToolResultPruner extends Service {
    */
   pruneSession(session: Session, options: PruneSessionOptions = {}): PruneResult {
     const stage = options.stage ?? 'pressure'
-    const policy = this.activePolicy(session, options.contextWindowTokens, stage)
+    // External callers (compaction-basic) do not carry routed capacity; the
+    // runtime resolves it itself so the frozen Auto Compact linkage and the
+    // Custom percentage policy see one consistent context window.
+    const contextWindowTokens = options.contextWindowTokens ?? this.contextWindowForRequest(session)
+    const policy = this.activePolicy(session, contextWindowTokens, stage)
     if (policy === undefined) return emptyResult()
     const profile = policy.profile
     const view = measureForCompaction(this.ctx, session)
@@ -359,24 +390,37 @@ export class ToolResultPruner extends Service {
       return summarize(landed)
     }
 
-    let historyPlans: PlannedReplacement[] = []
+    let historyOutcome: HistoryPlanOutcome = { kind: 'planned', plans: [] }
     let historyAllowed = false
     if (policy.historyMode === 'adaptive') {
-      historyPlans = this.planHistoricalAging(session, policy, view)
-      const capacityPressure = this.capacityPressureActive(session, view)
-      historyAllowed = this.adaptiveHistoryAllowed(session, view, historyPlans, capacityPressure)
-      if (historyAllowed) {
-        landed.push(...this.landAll(session, historyPlans))
+      historyOutcome = this.planHistoricalAging(session, policy, view)
+      // Adaptive cost authority is meaningful only after the structural
+      // planner has formed a real batch. A planning skip keeps its own reason
+      // (for example exact-tokenizer-unavailable) and never becomes a false
+      // adaptive-cost-rejected decision merely because it has zero plans.
+      if (historyOutcome.kind === 'planned') {
+        const capacityPressure = this.capacityPressureActive(session, view, policy)
+        historyAllowed = this.adaptiveHistoryAllowed(
+          session,
+          view,
+          historyOutcome.plans,
+          capacityPressure,
+        )
+        if (historyAllowed) {
+          landed.push(...this.landAll(session, historyOutcome.plans))
+        }
       }
     } else {
-      historyAllowed = this.historyAllowed(session, policy.historyMode, view)
+      historyAllowed = this.historyAllowed(session, policy, view)
       if (historyAllowed) {
-        historyPlans = this.planHistoricalAging(session, policy, view)
-        landed.push(...this.landAll(session, historyPlans))
+        historyOutcome = this.planHistoricalAging(session, policy, view)
+        if (historyOutcome.kind === 'planned') {
+          landed.push(...this.landAll(session, historyOutcome.plans))
+        }
       }
     }
     if (!landed.some(entry => entry.stage === 'pressure')) {
-      this.auditHistoryEvaluation(session, policy, view, historyAllowed, historyPlans)
+      this.auditHistoryEvaluation(session, policy, view, historyAllowed, historyOutcome)
     }
     if (policy.tailTrim?.enabled === true) {
       const tailView = measureForCompaction(this.ctx, session)
@@ -391,16 +435,57 @@ export class ToolResultPruner extends Service {
     const frozen = this.sessionSettings.get(session)
     if (frozen !== undefined) return frozen
     const settings = this.ctx.get('settings')?.get(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE))
-    const resolved = settings === undefined
-      ? ContextCompressionSettingsSchema({ profile: this.config.profile } as never)
-      : ContextCompressionSettingsSchema(structuredClone(settings) as never)
+    let resolved: ContextCompressionSettings
+    let settingsSource: 'host-settings' | 'plugin-config-fallback' = settings === undefined
+      ? 'plugin-config-fallback'
+      : 'host-settings'
+    let autoCompactThresholdSource: 'generation-config' | 'host-settings' | 'schema-default'
+      = settings === undefined ? 'schema-default' : 'host-settings'
+    let settingsInvalidFallback: 'lossless-off' | undefined
+    try {
+      resolved = settings === undefined
+        ? ContextCompressionSettingsSchema({ profile: this.config.profile } as never)
+        // Validate the Host value BEFORE cloning: structuredClone normalizes
+        // class/exotic prototypes to Object.prototype and would otherwise
+        // erase the very boundary the parser is responsible for enforcing.
+        : parseContextCompressionSettings(settings)
+    } catch (error: unknown) {
+      // A malformed persisted document must fail open LOSSLESSLY: freezing the
+      // deployment default could silently re-enable lossy compression the
+      // user never chose (for example a stored `off` plus an unknown key), so
+      // the session freezes effectively off and keeps every original result.
+      const reason = error instanceof Error ? error.message : String(error)
+      this.auditFailure(session, 'pressure', 'policy-resolution', error)
+      this.warnOnce(
+        session,
+        `settings-invalid:${reason}`,
+        'context-compression froze this session effectively off because the stored settings document is invalid: %s',
+        reason,
+      )
+      resolved = ContextCompressionSettingsSchema({ profile: 'off' } as never)
+      settingsSource = 'plugin-config-fallback'
+      autoCompactThresholdSource = 'schema-default'
+      settingsInvalidFallback = 'lossless-off'
+    }
+    if (this.config.autoCompactThresholdPercent !== undefined) {
+      // The preset overlay froze this generation's threshold into the
+      // deployment config; it supersedes the live Host setting so Auto
+      // Compact and micro compact can never split across two thresholds.
+      resolved = {
+        ...resolved,
+        autoCompact: { thresholdPercent: this.config.autoCompactThresholdPercent },
+      }
+      autoCompactThresholdSource = 'generation-config'
+    }
     const snapshot = deepFreeze(structuredClone(resolved))
     this.sessionSettings.set(session, snapshot)
     emitCompressionAudit(this.ctx.logger, {
       schemaVersion: 1,
       kind: 'policy-frozen',
       sessionId: String(session.id),
-      settingsSource: settings === undefined ? 'plugin-config-fallback' : 'host-settings',
+      settingsSource,
+      autoCompactThresholdSource,
+      ...settingsInvalidFallback === undefined ? {} : { settingsInvalidFallback },
       settings: snapshot,
       deploymentConfig: this.config,
     })
@@ -418,22 +503,49 @@ export class ToolResultPruner extends Service {
         this.config,
         settings.profile,
         settings.custom,
-        contextWindowTokens === undefined ? {} : { contextWindowTokens },
+        {
+          ...contextWindowTokens === undefined ? {} : { contextWindowTokens },
+          autoCompactThresholdPercent: settings.autoCompact.thresholdPercent,
+        },
       )
-      const auditKey = JSON.stringify({ policy, contextWindowTokens: contextWindowTokens ?? null })
-      let emittedAuditKeys = this.policyResolutionAudits.get(session)
-      if (emittedAuditKeys === undefined) {
-        emittedAuditKeys = new Set()
-        this.policyResolutionAudits.set(session, emittedAuditKeys)
-      }
-      if (!emittedAuditKeys.has(auditKey)) {
-        emittedAuditKeys.add(auditKey)
+      // Route changes must produce a fresh audit record even when the policy
+      // object is unchanged, or the dedupe would hide a mid-session reroute.
+      const route = this.routeAuditFact(session)
+      const auditKey = JSON.stringify({
+        policy,
+        contextWindowTokens: contextWindowTokens ?? null,
+        route: route ?? null,
+      })
+      // Deduplicate only CONSECUTIVE identical resolutions: a permanent set
+      // would hide an A -> B -> A reroute's third record.
+      if (this.policyResolutionAudits.get(session) !== auditKey) {
+        this.policyResolutionAudits.set(session, auditKey)
+        // Deployment config overrides win over the Auto Compact linkage, so a
+        // standard profile whose History watermarks were replaced must not
+        // audit itself as purely linkage-derived.
+        const overriddenLinkedFields = ([
+          'historyTriggerTokens',
+          'historyKeepRecentTokens',
+          'historyMinReclaimTokens',
+        ] as const).filter(key => this.config[key] !== undefined).length
         emitCompressionAudit(this.ctx.logger, {
           schemaVersion: 1,
           kind: 'policy-resolved',
           sessionId: String(session.id),
           policy,
           ...contextWindowTokens === undefined ? {} : { contextWindowTokens },
+          coordination: {
+            thresholdPercent: settings.autoCompact.thresholdPercent,
+            ...policy.autoCompactTokens === undefined ? {} : { autoCompactTokens: policy.autoCompactTokens },
+            ...policy.microDeadlineTokens === undefined ? {} : { microDeadlineTokens: policy.microDeadlineTokens },
+            paramSource: settings.profile === 'custom'
+              ? 'custom-manual'
+              : overriddenLinkedFields === 3 ? 'deployment-override'
+                : overriddenLinkedFields > 0 ? 'mixed'
+                  : policy.microDeadlineTokens === undefined ? 'fixed-preset' : 'auto-compact-linked',
+          },
+          ...route === undefined ? {} : { route },
+          ...route === undefined ? {} : this.tokenizerAuditFact(route),
         })
       }
       return policy
@@ -450,11 +562,34 @@ export class ToolResultPruner extends Service {
     }
   }
 
+  /** Routed provider/model when the durable request header names one route. */
+  private routeAuditFact(session: Session): { provider: string, model: string } | undefined {
+    const header = session.requestHeader()?.config
+    if (header === undefined || header.provider.length === 0 || header.model.length === 0) return undefined
+    return { provider: header.provider, model: header.model }
+  }
+
+  /** Bundled tokenizer identity for one route, when the route is eligible. */
+  private tokenizerAuditFact(route: { provider: string, model: string }): { tokenizer: { repository: string, revision: string } } {
+    // Reuse the measurement eligibility boundary: a DeepSeek model id routed
+    // through another provider never used the bundled tokenizer.
+    const eligible = route.provider === 'deepseek' || route.provider === 'deepseek-official'
+    const identity = eligible ? deepSeekV4TokenizerForModel(route.model)?.countText('') : undefined
+    if (identity?.kind === 'exact-tokenizer') {
+      return { tokenizer: { repository: identity.tokenizerId, revision: identity.tokenizerRevision } }
+    }
+    return { tokenizer: { repository: 'unavailable', revision: 'unavailable' } }
+  }
+
   private contextWindowForRequest(
     session: Session,
   ): number | undefined {
     const settings = this.activeSettings(session)
-    if (settings.profile !== 'custom' || settings.custom.unit !== 'context-percent') return undefined
+    // History linkage needs routed capacity for standard profiles, and the
+    // Custom percentage policy needs it for context-percent documents. Off and
+    // Native never link, and token-unit Custom stays manual.
+    if (settings.profile === 'off' || settings.profile === 'native') return undefined
+    if (settings.profile === 'custom' && settings.custom.unit !== 'context-percent') return undefined
     const config = session.requestHeader()?.config
     const routed = session.requestContext()
     if (config === undefined || config.provider.length === 0 || config.model.length === 0 || routed === undefined) {
@@ -464,7 +599,7 @@ export class ToolResultPruner extends Service {
       this.warnOnce(
         session,
         `custom-context-window-route:${config.provider}\0${config.model}`,
-        'context-compression kept the Custom percentage policy inactive because durable route capacity belongs to %s/%s, not %s/%s',
+        'context-compression kept the context-linked policy inactive because durable route capacity belongs to %s/%s, not %s/%s',
         routed.provider,
         routed.model,
         config.provider,
@@ -476,7 +611,7 @@ export class ToolResultPruner extends Service {
       this.warnOnce(
         session,
         `custom-context-window-capacity:${config.provider}\0${config.model}`,
-        'context-compression kept the Custom percentage policy inactive because %s/%s has no positive durable context capacity',
+        'context-compression kept the context-linked policy inactive because %s/%s has no positive durable context capacity',
         config.provider,
         config.model,
       )
@@ -503,24 +638,36 @@ export class ToolResultPruner extends Service {
   }
 
   /** Resolve historical-aging authority without accepting caller-supplied elevation. */
-  private historyAllowed(session: Session, mode: HistoryMode, view: CompactionTokenView): boolean {
-    switch (mode) {
+  private historyAllowed(session: Session, policy: CompressionPolicy, view: CompactionTokenView): boolean {
+    switch (policy.historyMode) {
       case 'disabled':
         return false
       case 'routine':
         return true
       case 'capacity-pressure':
-        return this.capacityPressureActive(session, view)
+        return this.capacityPressureActive(session, view, policy)
       case 'adaptive':
         return false
       /* v8 ignore next -- closed-union exhaustiveness guard */
       default:
-        return assertNever(mode, 'history mode')
+        return assertNever(policy.historyMode, 'history mode')
     }
   }
 
-  /** Match the default compaction-basic pressure gate using public durable data. */
-  private capacityPressureActive(session: Session, view: CompactionTokenView): boolean {
+  /**
+   * Match the compaction-basic pressure gate using public durable data. The
+   * frozen Auto Compact deadline `D = floor(A x 0.875)` replaces the legacy
+   * fixed 0.7 ratio once the standard-profile linkage resolved; without
+   * linkage the 0.7 ratio is the documented fallback and reproduces the
+   * previous behavior.
+   */
+  private capacityPressureActive(
+    session: Session,
+    view: CompactionTokenView,
+    policy: CompressionPolicy,
+  ): boolean {
+    const deadline = policy.microDeadlineTokens
+    if (deadline !== undefined) return view.totalTokens >= deadline
     const header = session.requestHeader()?.config
     const routed = session.requestContext()
     const contextWindow = routed?.contextWindow
@@ -1075,37 +1222,67 @@ export class ToolResultPruner extends Service {
     return result.isError === true || candidate.event.data.error !== undefined
   }
 
+  private historyOutcome(plans: readonly PlannedReplacement[]): HistoryPlanOutcome {
+    return { kind: 'planned', plans: [...plans] }
+  }
+
   private planHistoricalAging(
     session: Session,
     policy: CompressionPolicy,
     view: CompactionTokenView,
-  ): PlannedReplacement[] {
+  ): HistoryPlanOutcome {
     const candidates = this.snapshot(session, view)
     const exact: number[] = []
     for (const candidate of candidates) {
       const tokens = exactTokens(candidate.count)
       if (tokens === undefined) {
         this.warnExactUnavailable(session, view, 'history')
-        return []
+        return { kind: 'exact-tokenizer-unavailable' }
       }
       exact.push(tokens)
     }
     const total = exact.reduce((sum, tokens) => sum + tokens, 0)
     const trigger = policy.historyTriggerTokens
-    if (total <= trigger) return []
+    // Full-request last chance: ordinary prose, images, prompts, or schemas can
+    // push the complete request past the Auto Compact deadline before the tool
+    // results alone cross the profile trigger.
+    const deadline = policy.microDeadlineTokens
+    const lastChance = deadline !== undefined && view.totalTokens >= deadline
+    if (total <= trigger && !lastChance) return { kind: 'below-profile-trigger' }
 
     const protectedSeqs = this.protectedHistoryCandidateSeqs(candidates, policy)
-    const eligible = candidates.filter((candidate) => {
-      if (candidate.call.name === 'context_compression_retrieve') return false
-      if (protectedSeqs.has(candidate.seq)) return false
+    const isUnsafe = (candidate: SnapshotCandidate): boolean => {
+      if (candidate.call.name === 'context_compression_retrieve') return true
       const result = candidate.event.data.message.content[0]
       const block = onlyTextBlock(result.content)
-      if (block?.text.includes('[Old tool result content cleared from active context]') === true) return false
-      return true
-    })
+      return block?.text.includes('[Old tool result content cleared from active context]') === true
+    }
+    // Distinguish "nothing safe to touch" (recovery tool output or already
+    // cleared) from "everything left is inside the protected working set":
+    // both skip, but they are different operational facts.
+    const safe = candidates.filter(candidate => !isUnsafe(candidate))
+    const eligible = safe.filter(candidate => !protectedSeqs.has(candidate.seq))
+    if (eligible.length === 0) {
+      return safe.length === 0
+        ? { kind: 'no-safe-candidates' }
+        : { kind: 'protected-working-set' }
+    }
     const planned: PlannedReplacement[] = []
     let reclaim = 0
-    const required = Math.max(policy.historyMinReclaimTokens, total - policy.historyTriggerTokens)
+    // With a frozen Auto Compact deadline, microTarget = max(0, D - M) and one
+    // batch must justify its cache break by pulling the complete request back
+    // below the deadline. Without linkage (Custom manual, or no resolved
+    // routed capacity) the loop keeps its traditional target and the batch
+    // still commits once it reaches the minimum reclaim.
+    const microTarget = deadline === undefined ? undefined : Math.max(0, deadline - policy.historyMinReclaimTokens)
+    const required = Math.max(
+      policy.historyMinReclaimTokens,
+      total - trigger,
+      ...(microTarget === undefined ? [] : [view.totalTokens - microTarget]),
+    )
+    const batchTarget = microTarget === undefined
+      ? policy.historyMinReclaimTokens
+      : required
     for (const candidate of eligible) {
       const result = candidate.event.data.message.content[0]
       const block = onlyTextBlock(result.content)
@@ -1159,8 +1336,12 @@ export class ToolResultPruner extends Service {
       reclaim += plan.tokensBefore - plan.tokensAfter
       if (reclaim >= required) break
     }
-    // Do not pay a cache break for a trivial cleanup.
-    return reclaim >= policy.historyMinReclaimTokens ? planned : []
+    // Linked batches must reach the deadline target; unlinked batches keep
+    // the traditional minimum-reclaim commit threshold.
+    if (reclaim >= batchTarget && planned.length > 0) return this.historyOutcome(planned)
+    return lastChance
+      ? { kind: 'cannot-reach-deadline-target', reclaim, required }
+      : { kind: 'insufficient-reclaim', reclaim, required }
   }
 
   private protectedHistoryResultSeqs(
@@ -1289,7 +1470,10 @@ export class ToolResultPruner extends Service {
           || event.data.turn !== assistant.data.turn || event.data.step !== assistant.data.step
           || event.data.error !== undefined) return true
         const block = event.data.message.content[0]
-        return block.isError === true
+        if (block.isError === true) return true
+        // Images and other rich inner blocks stay fail-open: a TailTrim stub
+        // would silently delete them from the active context.
+        return block.content.some(contentBlock => contentBlock.type !== 'text')
       })) continue
       const next = session.events[nodes[index + 1 + calls.length] ?? -1]
       if (next?.type === 'tool/result'
@@ -1550,7 +1734,7 @@ export class ToolResultPruner extends Service {
     policy: CompressionPolicy,
     view: CompactionTokenView,
     allowed: boolean,
-    plans: readonly PlannedReplacement[],
+    outcome: HistoryPlanOutcome,
   ): void {
     if (policy.historyMode === 'disabled') {
       this.auditComponent(session, policy, 'history', 'pressure', 'disabled', 'profile-policy', {
@@ -1558,14 +1742,19 @@ export class ToolResultPruner extends Service {
       })
       return
     }
-    if (!allowed) {
-      const capacity = session.requestContext()?.contextWindow
-      const capacityTrigger = Number.isSafeInteger(capacity) && capacity !== undefined && capacity > 0
-        ? Math.floor(capacity * CAPACITY_PRESSURE_RATIO)
-        : undefined
+    if (!allowed && outcome.kind === 'planned') {
+      // The authority gate itself refused: below the frozen micro deadline
+      // (capacity-pressure) or the adaptive cost estimate rejected the batch.
+      const deadlineTrigger = policy.microDeadlineTokens
+      const capacity = deadlineTrigger === undefined ? session.requestContext()?.contextWindow : undefined
+      const capacityTrigger = deadlineTrigger !== undefined
+        ? deadlineTrigger
+        : Number.isSafeInteger(capacity) && capacity !== undefined && capacity > 0
+          ? Math.floor(capacity * CAPACITY_PRESSURE_RATIO)
+          : undefined
       this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
         policy.historyMode === 'capacity-pressure'
-          ? 'capacity-pressure-inactive' : 'adaptive-policy-rejected', {
+          ? 'below-micro-deadline' : 'adaptive-cost-rejected', {
           historyMode: policy.historyMode,
           measurementKind: view.currentSurface.kind,
           currentTokens: view.totalTokens,
@@ -1573,23 +1762,63 @@ export class ToolResultPruner extends Service {
         })
       return
     }
-    const candidates = this.snapshot(session, view)
-      .filter(candidate => candidate.call.name !== 'context_compression_retrieve')
-    const exact = candidates.map(candidate => exactTokens(candidate.count))
-    const exactAvailable = exact.every(tokens => tokens !== undefined)
-    const total = exactAvailable
-      ? (exact as number[]).reduce((sum, tokens) => sum + tokens, 0)
-      : undefined
-    this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
-      !exactAvailable ? 'exact-tokenizer-unavailable'
-        : (total ?? 0) <= policy.historyTriggerTokens ? 'at-or-below-trigger'
-          : plans.length === 0 ? 'no-eligible-minimum-reclaim'
-            : 'recovery-tool-unavailable', {
-        historyMode: policy.historyMode,
-        measurementKind: exactAvailable ? 'exact-tokenizer' : 'unavailable',
-        ...(total === undefined ? {} : { currentTokens: total }),
-        triggerTokens: policy.historyTriggerTokens,
-      })
+    const deadline = policy.microDeadlineTokens
+    const lastChance = deadline !== undefined && view.totalTokens >= deadline
+    const detail = (extra: Readonly<Record<string, number>> = {}): Readonly<{
+      historyMode?: HistoryMode
+      measurementKind?: 'exact-tokenizer' | 'tokenizer-estimate' | 'unavailable'
+      currentTokens?: number
+      triggerTokens?: number
+      reclaimTokens?: number
+      requiredTokens?: number
+    }> => ({
+      historyMode: policy.historyMode,
+      measurementKind: outcome.kind === 'exact-tokenizer-unavailable' ? 'unavailable' : 'exact-tokenizer',
+      currentTokens: view.totalTokens,
+      ...(outcome.kind === 'insufficient-reclaim' || outcome.kind === 'cannot-reach-deadline-target'
+        ? { reclaimTokens: outcome.reclaim, requiredTokens: outcome.required }
+        : {}),
+      ...extra,
+    })
+    switch (outcome.kind) {
+      case 'exact-tokenizer-unavailable':
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          'exact-tokenizer-unavailable', detail({ triggerTokens: policy.historyTriggerTokens }))
+        return
+      case 'below-profile-trigger':
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          'below-profile-trigger', detail({ triggerTokens: policy.historyTriggerTokens }))
+        return
+      case 'no-safe-candidates':
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          'no-safe-candidates', detail({ triggerTokens: policy.historyTriggerTokens }))
+        return
+      case 'protected-working-set':
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          'protected-working-set', detail({ triggerTokens: policy.historyTriggerTokens }))
+        return
+      case 'insufficient-reclaim':
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          'insufficient-reclaim', detail({ triggerTokens: policy.historyTriggerTokens }))
+        return
+      case 'cannot-reach-deadline-target':
+        // Planning engaged through the full-request last-chance gate; the
+        // routine trigger numbers below would misdescribe why nothing landed.
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          'cannot-reach-deadline-target', detail(lastChance ? { triggerTokens: deadline } : {}))
+        return
+      case 'planned':
+        // A committed batch that landed nothing means the recovery tool was
+        // unavailable at landing time; a degenerate empty commit reads as an
+        // unreachable target instead.
+        this.auditComponent(session, policy, 'history', 'pressure', 'skipped',
+          outcome.plans.length > 0 ? 'recovery-tool-unavailable' : 'insufficient-reclaim',
+          detail({ triggerTokens: lastChance ? deadline : policy.historyTriggerTokens }))
+        return
+      /* v8 ignore next -- closed-union exhaustiveness guard */
+      default:
+        return assertNever(outcome, 'history plan outcome')
+    }
   }
 
   private auditComponent(
@@ -1605,6 +1834,8 @@ export class ToolResultPruner extends Service {
       currentTokens?: number
       triggerTokens?: number
       targetTokens?: number
+      reclaimTokens?: number
+      requiredTokens?: number
     }> = {},
   ): void {
     emitCompressionAudit(this.ctx.logger, {

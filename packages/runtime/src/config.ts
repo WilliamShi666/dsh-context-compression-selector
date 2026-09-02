@@ -3,6 +3,7 @@
 import { deepFreeze } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import type {
+  AutoCompactSettings,
   CompressionPolicy,
   CompressionProfile,
   CustomCompressionPolicy,
@@ -24,30 +25,152 @@ export const CONTEXT_COMPRESSION_SETTINGS_NAMESPACE = 'context-compression'
 /** Fixed native fallback marker. */
 export const PRUNE_MARKER = '\n\n[... tool result middle pruned ...]\n\n'
 
+/**
+ * The one Auto Compact threshold contract shared by the settings UI, the
+ * persisted settings schema, and the runtime resolver. `70 / 80 / 85` are
+ * quick-fill suggestions in the UI only; every integer in the range is valid.
+ */
+export const AUTO_COMPACT_THRESHOLD_LIMITS = deepFreeze({
+  min: 50,
+  max: 90,
+  step: 1,
+  default: 80,
+} as const)
+
+/** Narrow one untrusted value to a valid Auto Compact threshold percent. */
+export function isValidAutoCompactThresholdPercent(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= AUTO_COMPACT_THRESHOLD_LIMITS.min
+    && value <= AUTO_COMPACT_THRESHOLD_LIMITS.max
+}
+
+const AUTO_COMPACT_DEFAULT: AutoCompactSettings = deepFreeze({ thresholdPercent: AUTO_COMPACT_THRESHOLD_LIMITS.default })
+
+/** Accept JSON-object records while rejecting class instances and exotic prototypes. */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value) as object | null
+  return prototype === Object.prototype || prototype === null
+}
+
+/** Reject exotic prototypes anywhere in the JSON-like settings tree. */
+function assertPlainDataTree(value: unknown, seen: WeakSet<object> = new WeakSet()): void {
+  if (value === null || typeof value !== 'object') return
+  if (seen.has(value)) return
+  seen.add(value)
+  if (Array.isArray(value)) {
+    for (const entry of value) assertPlainDataTree(entry, seen)
+    return
+  }
+  if (!isPlainRecord(value)) {
+    throw new TypeError('Context-compression settings must contain only plain objects')
+  }
+  for (const entry of Object.values(value)) assertPlainDataTree(entry, seen)
+}
+
+/**
+ * Strictly parse the persisted autoCompact section. Schemastery object
+ * defaults silently absorb null, empty, and extra-key sections, so this stays
+ * hand-validated beside the top-level unknown-key check.
+ */
+function parseAutoCompactSettings(value: unknown): AutoCompactSettings {
+  if (value === undefined) return AUTO_COMPACT_DEFAULT
+  if (!isPlainRecord(value)) {
+    throw new TypeError('Context-compression autoCompact must be a plain object')
+  }
+  const keys = Object.keys(value)
+  if (keys.length !== 1 || keys[0] !== 'thresholdPercent') {
+    throw new TypeError(`Context-compression autoCompact: expected exactly "thresholdPercent", got "${keys.join('", "')}"`)
+  }
+  const thresholdPercent = (value as Record<string, unknown>).thresholdPercent
+  if (!isValidAutoCompactThresholdPercent(thresholdPercent)) {
+    throw new TypeError(`Context-compression autoCompact.thresholdPercent (${String(thresholdPercent)}) must be an integer between ${String(AUTO_COMPACT_THRESHOLD_LIMITS.min)} and ${String(AUTO_COMPACT_THRESHOLD_LIMITS.max)}`)
+  }
+  return { thresholdPercent }
+}
+
 /** Settings schema used by the user-facing profile selector. */
 const contextCompressionSettingsInputSchema = z.object({
   profile: z.union([...COMPRESSION_PROFILES]).default('balanced'),
   custom: CustomCompressionPolicySchema.default(DEFAULT_CUSTOM_COMPRESSION_POLICY),
 })
 
+/**
+ * Reject a section that is PRESENT but not a usable value. Schemastery
+ * `.default(...)` silently substitutes null and undefined, which would turn a
+ * hand-corrupted store into the (lossy) default policy; only genuinely absent
+ * keys may inherit defaults, and that distinction must be made before any
+ * default can fire.
+ */
+function assertPresentSection(
+  candidate: Record<string, unknown>,
+  key: 'profile' | 'custom',
+  valid: (value: unknown) => boolean,
+): void {
+  if (!Object.hasOwn(candidate, key)) return
+  if (!valid(candidate[key])) {
+    throw new TypeError(`Context-compression settings: "${key}" is present but invalid (${String(candidate[key])})`)
+  }
+}
+
+const isSupportedProfile = (value: unknown): boolean =>
+  typeof value === 'string' && (COMPRESSION_PROFILES as readonly string[]).includes(value)
+
+const isUsableCustomDocument = (value: unknown): boolean =>
+  isPlainRecord(value)
+
 const DEFAULT_CONTEXT_COMPRESSION_SETTINGS: ContextCompressionSettings = {
   profile: 'balanced',
   custom: structuredClone(DEFAULT_CUSTOM_COMPRESSION_POLICY),
+  autoCompact: { thresholdPercent: AUTO_COMPACT_THRESHOLD_LIMITS.default },
+}
+
+/**
+ * Parse one settings document with the persisted-section semantics: `undefined`
+ * inherits the defaults (an absent section), while `null` is an explicitly
+ * invalid document and must never silently become the default policy.
+ */
+export function parseContextCompressionSettings(value: unknown): ContextCompressionSettings {
+  if (!isPlainRecord(value)) {
+    throw new TypeError('Context-compression settings must be a plain object')
+  }
+  const keys = Object.keys(value)
+  // Documents surfaced by the settings service are always schema-resolved and
+  // complete; anything thinner is a hand-edited store and must not silently
+  // become a default (possibly lossy) policy.
+  if (keys.length === 0 || !keys.includes('profile') || !keys.includes('custom')) {
+    throw new TypeError('Context-compression settings document is missing its complete shape')
+  }
+  return ContextCompressionSettingsSchema(value as never)
 }
 
 /** Settings schema used by the user-facing profile selector. */
 export const ContextCompressionSettingsSchema: z<ContextCompressionSettings> = z.transform(
   z.any().required(),
   (value: unknown): ContextCompressionSettings => {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isPlainRecord(value)) {
       throw new TypeError('Context-compression settings must be a plain object')
     }
-    const candidate = value as Record<string, unknown>
-    const unknown = Object.keys(candidate).find(key => key !== 'profile' && key !== 'custom')
+    // Validate prototypes before cloning, then parse a detached mutable copy:
+    // SettingsProvider returns frozen records, while structuredClone would
+    // otherwise erase exotic prototypes before this boundary can reject them.
+    assertPlainDataTree(value)
+    const candidate = structuredClone(value)
+    // Settings stored before the autoCompact section exist remain valid and
+    // inherit the 80% default; the section itself stays strictly shaped.
+    const unknown = Object.keys(candidate).find(key => key !== 'profile' && key !== 'custom' && key !== 'autoCompact')
     if (unknown !== undefined) {
       throw new TypeError(`Context-compression settings: unknown key "${unknown}"`)
     }
-    return contextCompressionSettingsInputSchema(candidate)
+    // Present-but-invalid sections must never fall through to the Schemastery
+    // defaults below: `profile: null` silently becoming the lossy `balanced`
+    // default is exactly the corruption the lossless-off fallback exists for.
+    // Only genuinely absent sections (internal partial fallbacks) may inherit.
+    assertPresentSection(candidate, 'profile', isSupportedProfile)
+    assertPresentSection(candidate, 'custom', isUsableCustomDocument)
+    const autoCompact = parseAutoCompactSettings(candidate.autoCompact)
+    return { ...contextCompressionSettingsInputSchema(candidate), autoCompact }
   },
 ).default(DEFAULT_CONTEXT_COMPRESSION_SETTINGS) as z<ContextCompressionSettings>
 
@@ -72,6 +195,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   'historyKeepRecentToolCalls',
   'historyKeepRecentTokens',
   'historyMinReclaimTokens',
+  'autoCompactThresholdPercent',
 ])
 
 const LEGACY_GATE_REPLACEMENTS: Readonly<Record<string, string>> = Object.freeze({
@@ -138,6 +262,7 @@ export function resolveConfig(config: ToolResultPruneConfig = {}): ResolvedConfi
     ...config.historyKeepRecentToolCalls === undefined ? {} : { historyKeepRecentToolCalls: config.historyKeepRecentToolCalls },
     ...config.historyKeepRecentTokens === undefined ? {} : { historyKeepRecentTokens: config.historyKeepRecentTokens },
     ...config.historyMinReclaimTokens === undefined ? {} : { historyMinReclaimTokens: config.historyMinReclaimTokens },
+    ...config.autoCompactThresholdPercent === undefined ? {} : { autoCompactThresholdPercent: config.autoCompactThresholdPercent },
   }
   if (!isCompressionProfile(resolved.profile)) {
     throw new Error(`ToolResultPruneConfig: unsupported profile "${String(resolved.profile)}"`)
@@ -158,10 +283,69 @@ export function resolveConfig(config: ToolResultPruneConfig = {}): ResolvedConfi
   if (resolved.historyKeepRecentTokens !== undefined) {
     assertNonNegativeInteger('historyKeepRecentTokens', resolved.historyKeepRecentTokens)
   }
+  if (resolved.autoCompactThresholdPercent !== undefined
+    && !isValidAutoCompactThresholdPercent(resolved.autoCompactThresholdPercent)) {
+    throw new Error(`ToolResultPruneConfig: autoCompactThresholdPercent (${String(resolved.autoCompactThresholdPercent)}) must be an integer between ${String(AUTO_COMPACT_THRESHOLD_LIMITS.min)} and ${String(AUTO_COMPACT_THRESHOLD_LIMITS.max)}`)
+  }
   assertTargetBelowTrigger('native', resolved.nativeTargetTokens, resolved.nativeTriggerTokens)
   assertTargetBelowTrigger('fresh', resolved.freshTargetTokens, resolved.freshTriggerTokens)
   assertTargetBelowTrigger('aggregate', resolved.aggregateTargetTokens, resolved.aggregateTriggerTokens)
   return deepFreeze(structuredClone(resolved))
+}
+
+/** Per-profile History linkage ratios applied to the Auto Compact watermark. */
+const AUTO_COMPACT_HISTORY_RATIOS: Readonly<Record<string, Readonly<{
+  trigger: number
+  minReclaim: number
+  keepRecentTokens: number
+}>>> = Object.freeze({
+  balanced: Object.freeze({ trigger: 0.625, minReclaim: 0.12, keepRecentTokens: 0.08 }),
+  savings: Object.freeze({ trigger: 0.50, minReclaim: 0.16, keepRecentTokens: 0.08 }),
+  'cache-strict': Object.freeze({ trigger: 0.75, minReclaim: 0.16, keepRecentTokens: 0.08 }),
+  adaptive: Object.freeze({ trigger: 0.625, minReclaim: 0.12, keepRecentTokens: 0.08 }),
+})
+
+/** Micro-compact last-chance ratio: `D = floor(A × 0.875)`. */
+const MICRO_DEADLINE_RATIO = 0.875
+
+/**
+ * Resolve the Auto-Compact-linked History watermarks for one standard profile.
+ *
+ * `A = floor(C × a)` is the Auto Compact token watermark for the routed
+ * context window `C` and the user threshold `a = p / 100`; the History
+ * trigger, minimum reclaim, and recent-token tail scale with `A`, and the
+ * micro-compact last-chance deadline is `D = floor(A × 0.875)`. At the shipped
+ * defaults (`C = 1,000,000`, `p = 80`) the ratios reproduce the previous fixed
+ * preset numbers exactly. Custom stays manual and Off/Native run no History,
+ * so none of them link.
+ */
+function resolveAutoCompactLinkage(
+  profile: CompressionProfile,
+  options: CustomPolicyResolutionOptions,
+): { autoCompactTokens: number, microDeadlineTokens: number, historyTriggerTokens: number,
+  historyMinReclaimTokens: number, historyKeepRecentTokens: number } | undefined {
+  const ratios = profile === 'custom' ? undefined : AUTO_COMPACT_HISTORY_RATIOS[profile]
+  const contextWindow = options.contextWindowTokens
+  const threshold = options.autoCompactThresholdPercent
+  if (ratios === undefined) return undefined
+  if (!isValidAutoCompactThresholdPercent(threshold)) return undefined
+  if (!Number.isSafeInteger(contextWindow) || contextWindow === undefined || contextWindow <= 0) return undefined
+  // Mirror compaction-basic's evaluation order exactly: it multiplies by the
+  // generated ratio float (p / 100), and integer-first division differs by
+  // one token on some window/percent pairs (200k x 57).
+  const autoCompactTokens = Math.floor(contextWindow * (threshold / 100))
+  if (!Number.isSafeInteger(autoCompactTokens) || autoCompactTokens <= 0) return undefined
+  const linked = {
+    autoCompactTokens,
+    microDeadlineTokens: Math.floor(autoCompactTokens * MICRO_DEADLINE_RATIO),
+    historyTriggerTokens: Math.floor(ratios.trigger * autoCompactTokens),
+    historyMinReclaimTokens: Math.floor(ratios.minReclaim * autoCompactTokens),
+    historyKeepRecentTokens: Math.floor(ratios.keepRecentTokens * autoCompactTokens),
+  }
+  for (const value of Object.values(linked)) {
+    if (!Number.isSafeInteger(value) || value <= 0) return undefined
+  }
+  return linked
 }
 
 /**
@@ -169,7 +353,8 @@ export function resolveConfig(config: ToolResultPruneConfig = {}): ResolvedConfi
  * @param config - validated composition configuration.
  * @param profile - profile frozen for the target Session.
  * @param custom - versioned Custom document used only by the `custom` profile.
- * @param options - routed capacity needed to resolve context-percent Custom values.
+ * @param options - routed capacity and the frozen Auto Compact threshold used
+ * to resolve context-percent Custom values and standard-profile linkage.
  * @returns the effective deterministic compression policy.
  */
 export function resolvePolicy(
@@ -230,6 +415,7 @@ export function resolvePolicy(
     },
   }
   const preset = presets[profile]
+  const linkage = resolveAutoCompactLinkage(profile, options)
   const policy: CompressionPolicy = {
     profile,
     ...preset,
@@ -239,10 +425,17 @@ export function resolvePolicy(
     freshTargetTokens: config.freshTargetTokens ?? preset.freshTargetTokens,
     aggregateTriggerTokens: config.aggregateTriggerTokens ?? preset.aggregateTriggerTokens,
     aggregateTargetTokens: config.aggregateTargetTokens ?? preset.aggregateTargetTokens,
-    historyTriggerTokens: config.historyTriggerTokens ?? preset.historyTriggerTokens,
+    historyTriggerTokens: config.historyTriggerTokens
+      ?? linkage?.historyTriggerTokens ?? preset.historyTriggerTokens,
     historyKeepRecentToolCalls: config.historyKeepRecentToolCalls ?? preset.historyKeepRecentToolCalls,
-    historyKeepRecentTokens: config.historyKeepRecentTokens ?? preset.historyKeepRecentTokens,
-    historyMinReclaimTokens: config.historyMinReclaimTokens ?? preset.historyMinReclaimTokens,
+    historyKeepRecentTokens: config.historyKeepRecentTokens
+      ?? linkage?.historyKeepRecentTokens ?? preset.historyKeepRecentTokens,
+    historyMinReclaimTokens: config.historyMinReclaimTokens
+      ?? linkage?.historyMinReclaimTokens ?? preset.historyMinReclaimTokens,
+    ...linkage === undefined ? {} : {
+      autoCompactTokens: linkage.autoCompactTokens,
+      microDeadlineTokens: linkage.microDeadlineTokens,
+    },
   }
   if (policy.nativeTargetTokens >= policy.nativeTriggerTokens && profile === 'native') {
     throw new Error('context compression policy: native target must be below trigger')

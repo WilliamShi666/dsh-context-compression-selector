@@ -24,12 +24,14 @@ afterEach(async () => {
 
 class MemorySettings extends SettingsProvider {
   readonly writable = true
+  private readonly stored: Record<string, unknown> = {}
 
   protected load(): Promise<Record<string, unknown>> {
-    return Promise.resolve({})
+    return Promise.resolve(structuredClone(this.stored))
   }
 
-  protected persist(_ns: SettingsNamespace, _section: Record<string, unknown>): Promise<void> {
+  protected persist(ns: SettingsNamespace, section: Record<string, unknown>): Promise<void> {
+    this.stored[ns] = structuredClone(section)
     return Promise.resolve()
   }
 }
@@ -122,5 +124,81 @@ describe('context compression selector Host preset integration', () => {
     await bundle.dispose()
     expect((await service.mount({})).path).toBe(preset.path)
     expect(ctx.settings.describe().filter(row => row.ns === namespace)).toHaveLength(0)
+  })
+
+  it('writes the saved Auto Compact threshold into the generated compaction-basic composition', async () => {
+    const preset = await sourcePreset()
+    ctx = new Context()
+    await ctx.plugin(MemorySettings).await()
+    await ctx.plugin(FakeAgentPresets, preset).await()
+    // A settings-owning row must register the namespace before the update.
+    await ctx.plugin({ apply }).await()
+    const namespace = settingsNamespace('context-compression')
+    await ctx.settings.update(namespace, { autoCompact: { thresholdPercent: 73 } })
+
+    const bundle = ctx.plugin({ apply: (child) => {
+      apply(child, { presetOverlay: true })
+    } })
+    await bundle.await()
+
+    const service = ctx.agentPresets as unknown as OverlayableAgentPresets
+    const mounted = await service.mount({})
+    const rendered = await readFile(mounted.path, 'utf8')
+    expect(rendered).toContain('id: compaction-basic')
+    expect(rendered).toContain('thresholdRatio: 0.73')
+    // First-release retention stays pinned at 0.16 next to the threshold.
+    expect(rendered).toContain('retainRatio: 0.16')
+    // The SAME read feeds the runtime deployment config, so one generation
+    // cannot split Auto Compact and micro compact across two thresholds.
+    expect(rendered).toContain('id: tool-result-pruner')
+    expect(rendered).toContain('autoCompactThresholdPercent: 73')
+    await bundle.dispose()
+  })
+
+  it('defaults the generated threshold to 0.8 and keeps it absent from settings until saved', async () => {
+    const preset = await sourcePreset()
+    ctx = new Context()
+    await ctx.plugin(MemorySettings).await()
+    await ctx.plugin(FakeAgentPresets, preset).await()
+
+    const bundle = ctx.plugin({ apply: (child) => {
+      apply(child, { presetOverlay: true })
+    } })
+    await bundle.await()
+
+    const service = ctx.agentPresets as unknown as OverlayableAgentPresets
+    const rendered = await readFile((await service.mount({})).path, 'utf8')
+    expect(rendered).toContain('thresholdRatio: 0.8')
+    await bundle.dispose()
+  })
+
+  it('moves the standing composition generation when an equal-length threshold changes', async () => {
+    const preset = await sourcePreset()
+    ctx = new Context()
+    await ctx.plugin(MemorySettings).await()
+    await ctx.plugin(FakeAgentPresets, preset).await()
+    // A settings-owning row must register the namespace before the update.
+    await ctx.plugin({ apply }).await()
+    const namespace = settingsNamespace('context-compression')
+    await ctx.settings.update(namespace, { autoCompact: { thresholdPercent: 70 } })
+
+    const bundle = ctx.plugin({ apply: (child) => {
+      apply(child, { presetOverlay: true })
+    } })
+    await bundle.await()
+
+    const service = ctx.agentPresets as unknown as OverlayableAgentPresets
+    const first = await service.mount({})
+    expect(await readFile(first.path, 'utf8')).toContain('thresholdRatio: 0.7')
+    expect(await service.standingKeyFor()).toBe(first.path)
+
+    // Same character length, different content: the generated identity and
+    // standing composition generation must both move to the new threshold.
+    await ctx.settings.update(namespace, { autoCompact: { thresholdPercent: 80 } })
+    const second = await service.mount({})
+    expect(second.path).not.toBe(first.path)
+    expect(await readFile(second.path, 'utf8')).toContain('thresholdRatio: 0.8')
+    expect(await service.standingKeyFor()).toBe(second.path)
+    await bundle.dispose()
   })
 })

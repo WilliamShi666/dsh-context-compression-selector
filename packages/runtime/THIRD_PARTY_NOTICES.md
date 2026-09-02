@@ -24,7 +24,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-This package also distributes `tokenizer.json` and `tokenizer_config.json` from `deepseek-ai/DeepSeek-V4-Pro` revision `0e1a0e5e52aea73055f50fef6f2423db370265b6`, under the MIT license. The exact provenance and SHA-256 values are in `assets/deepseek-v4/manifest.json`; `assets/deepseek-v4/LICENSE.DeepSeek-V4-Pro.txt` contains the upstream license.
+This package also distributes `tokenizer.json` and `tokenizer_config.json` from these pinned official repositories, both under the MIT license:
+
+- `deepseek-ai/DeepSeek-V4-Pro` revision `0e1a0e5e52aea73055f50fef6f2423db370265b6` (serves `deepseek-v4-flash` and `deepseek-v4-pro`), in `assets/deepseek-v4/`.
+- `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` revision `6821d6ad3681a4b137b066b76094fa82ebd0a380` (serves `deepseek-v4-flash-vision-exp`), in `assets/deepseek-v4-vision-exp/`. This tokenizer is a distinct artifact, not an alias of the V4 Pro tokenizer.
+
+The exact provenance and SHA-256 values are in each directory's `manifest.json`; the upstream license text ships beside the assets. The vision image-token arithmetic is a port of the repository's `inference/image_processor.py` at the same pinned revision.
 
 The runtime depends on `@huggingface/tokenizers` 0.1.3 under Apache-2.0. Its NPM package carries the dependency license text.
 

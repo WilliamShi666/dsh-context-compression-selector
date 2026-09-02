@@ -1,0 +1,22 @@
+{
+  "repository": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+  "revision": "6821d6ad3681a4b137b066b76094fa82ebd0a380",
+  "license": "MIT",
+  "modelIds": [
+    "deepseek-v4-flash-vision-exp"
+  ],
+  "files": {
+    "tokenizer.json": {
+      "bytes": 6367257,
+      "sha256": "c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b"
+    },
+    "tokenizer_config.json": {
+      "bytes": 801,
+      "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
+    },
+    "LICENSE.DeepSeek-V4-Flash-Vision-Exp.txt": {
+      "bytes": 1065,
+      "sha256": "6e4c38e1172f42fdbff13edf9a7a017679fb82b0fde415a3e8b3c31c6ed4a4e4"
+    }
+  }
+}

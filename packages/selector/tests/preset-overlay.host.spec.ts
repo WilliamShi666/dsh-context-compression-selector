@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +8,7 @@ import {
   decorateAgentPresets,
   type CompressionModulePaths,
   type OverlayableAgentPresets,
+  type PresetOverlayMetadataIo,
 } from '../src/preset-overlay.ts'
 
 const MODULES: CompressionModulePaths = {
@@ -190,5 +191,53 @@ describe('plugin-owned preset overlay decorator', () => {
 
     await second.dispose()
     expect((await presets.mount({}, 'standard')).path).toBe(standard.path)
+  })
+
+  it('does not share one decoration across different metadata policies', async () => {
+    const { root, standard } = await fixture()
+    const presets = new FakeAgentPresets(new Map([['standard', standard]]))
+    const metadataIo = (): PresetOverlayMetadataIo => ({
+      async setTimes(path, stamp) {
+        await utimes(path, stamp, stamp)
+      },
+      async read(path) {
+        const observed = await stat(path)
+        return { mtimeMs: observed.mtimeMs, size: observed.size }
+      },
+    })
+    const first = decorateAgentPresets(presets, {
+      modules: MODULES,
+      tempParent: root,
+      metadataIo: metadataIo(),
+    })
+
+    expect(() => decorateAgentPresets(presets, {
+      modules: MODULES,
+      tempParent: root,
+      metadataIo: metadataIo(),
+    })).toThrow(/different compression overlay/u)
+
+    await first.dispose()
+  })
+
+  it('removes staging files when metadata preparation fails before publish', async () => {
+    const { root, standard } = await fixture()
+    const presets = new FakeAgentPresets(new Map([['standard', standard]]))
+    const installation = decorateAgentPresets(presets, {
+      modules: MODULES,
+      tempParent: root,
+      metadataIo: {
+        setTimes: () => Promise.reject(new Error('synthetic metadata failure')),
+        read: () => Promise.reject(new Error('metadata read must not run')),
+      },
+    })
+
+    await expect(presets.mount({}, 'standard')).rejects.toThrow(/synthetic metadata failure/u)
+    const generatedDirectories = (await readdir(root, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory() && entry.name.startsWith('dsh-context-compression-presets-'))
+    expect(generatedDirectories).toHaveLength(1)
+    expect(await readdir(join(root, generatedDirectories[0]!.name))).toEqual([])
+
+    await installation.dispose()
   })
 })

@@ -5,7 +5,7 @@
 [English README](README.md) · [English courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!IMPORTANT]
-> 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-v4-flash` 和 `deepseek-v4-pro`。`deepseek-v4-flash-vision-exp` **不受支持**；其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
+> 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-v4-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash-vision-exp`。其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
 
 ## 它解决什么问题
 
@@ -21,9 +21,14 @@
 
 ## 设置界面
 
-在 DeepSeek Harness 设置中选择压缩 Profile。一个 Session 首次观察到配置后会冻结该配置，因此之后修改设置只会影响新 Session，而不会悄悄改变正在运行的任务。
+在 DeepSeek Harness 设置中选择压缩 Profile，并在同一 section 设置 Auto Compact 触发水位。一个 Session 首次观察到配置后会冻结该配置，因此之后修改设置只会影响新 Session，而不会悄悄改变正在运行的任务。
+
+### Auto Compact 阈值
+
+选择器设置页提供 `autoCompact.thresholdPercent`：50%–90% 的整数（步长 1%），默认 80%。`70% / 80% / 85%` 仅是快捷填入值——73% 等任意合法值都可以保存。超出推荐区间 70%–85% 时会显示风险说明，但仍然允许保存。该水位会作为 `thresholdRatio` 写入生成的 `compaction-basic` 组合，并在同一次读取中写入插件 runtime 的部署配置，因此同一个 standing generation 绝不会让 Auto Compact 与 micro compact 运行在两个不同阈值上。它按 `A = floor(C × a)`（`a = thresholdPercent / 100`，以浮点比例参与运算——与 `compaction-basic` 自身的运算顺序一致）联动标准 Profile 的 History 触发值、最小回收量与近期尾窗，以及 micro compact 最后机会水位 `D = floor(A × 0.875)`。默认 80% 在 1M 上下文下完全复现原有数值。Fresh、Aggregate、Native 单结果预算、近期 10 次调用工作集和 Auto Compact retain 比例本版保持不变；Custom 保持手动。
 
 ![上下文压缩选择器设置界面](docs/assets/context-compression-selector-settings.png)
+
 
 ## 适合谁使用
 
@@ -39,11 +44,13 @@
 | --- | --- |
 | `deepseek-v4-flash` | 支持 |
 | `deepseek-v4-pro` | 支持 |
-| `deepseek-v4-flash-vision-exp` | 不支持；安全降级 |
+| `deepseek-v4-flash-vision-exp` | 支持：文本精确计数及有界图片 token 估算；含图片的改写候选仍不具备 exact 资格并保持原样 |
 | 其他 DeepSeek 模型 id | 不支持；安全降级 |
 | DeepSeek Harness 中的非 DeepSeek 模型 | 不支持；安全降级 |
 
-“安全降级”表示原始工具结果会保留在上下文中，并产生可审计的跳过或失败记录。特别是 Flash 视觉模型虽然有价格目录条目，但没有经过验证的 bundled tokenizer 映射，因此不能被当作文本 Flash 的别名。选择器不会使用字符数估算 token，也不能被当成通用、多提供商的压缩器。
+视觉模型由独立捆绑的官方 tokenizer 提供服务，固定在 `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` revision `6821d6ad3681a4b137b066b76094fa82ebd0a380`——它不能被当作文本 Flash 的别名。视觉图片 token 使用官方图像处理算术的逐行移植计算（patch 14、downsample 3、384 token 上限、最小像素、宽高比裁剪与依赖位置的对齐 padding），并以官方 Python 参考实现生成的 golden fixtures 逐项验证。有效图片以 `tokenizer-estimate` 上报：根据持久化 intrinsic 尺寸计算四种可能的对齐位置并取中值，同时保留每张图片 384 token 的保守上限；尺寸畸形或无法计算时固定计为 256 token，不再使整个视觉 surface 变为不可用。这些数值仍是估算，因为当前计量边界没有公开绝对 prompt 位置及 adapter 最终请求图片投影（包括按路由覆盖像素预算和字节上限二次投影）；例如 800×800 上传被投影为 512×512 时，实际 token 会与 intrinsic 估算产生较大差异。估算值改善压力统计，但不会授权有损改写：含图片的工具结果候选仍不具备 exact 资格，不会被改写、删除或按零 token 计。若上游以后公开投影后尺寸与绝对序列化位置，即可进一步升级为精确计数。
+
+“安全降级”表示原始工具结果会保留在上下文中，并产生可审计的跳过或失败记录。选择器不会使用字符数估算 token，也不能被当成通用、多提供商的压缩器。
 
 ## 预压缩与历史压缩并不相同
 
@@ -85,12 +92,12 @@ Profile 是编排策略，不是彼此独立的压缩算法。一个 Profile 会
 | Off | 关闭 | 关闭 | 关闭 | 关闭 |
 | Native | 关闭 | 关闭 | 启用（`4096 → 2048`） | 关闭 |
 | Balanced | `8192 → 3072` / `32768 → 12288` | `500000` 常规触发；保护最近 10 次调用和 64,000 token 尾窗 | 关闭 | 关闭 |
-| Cache Strict | 与 Balanced 相同 | 工具结果超过 `600000` token 且路由上下文利用率至少 70% 时触发 | 关闭 | 关闭 |
+| Cache Strict | 与 Balanced 相同 | 完整请求达到 `D = 700000` 时进入最后机会；达到 `D` 后，即使工具结果 token 不高于 `H = 600000`，planner 也可以运行 | 关闭 | 关闭 |
 | Savings | `4096 → 1536` / `16384 → 4096` | `400000` 常规触发 | 关闭 | 关闭 |
 | Adaptive | 与 Balanced 相同 | `500000` 下基于保守估算的路由；容量压力可作为安全覆盖 | 关闭 | 关闭 |
 | Custom | 可配置 | 可配置 | 关闭 | 可选，默认关闭 |
 
-History 会保护“最近 10 次 Agent 工具调用”和“最近 64,000 个工具结果 token”的并集。只有能够满足该策略最低回收量时，较早且合格的结果才会被改写。
+History 会保护“最近 10 次 Agent 工具调用”和“最近 64,000 个工具结果 token”的并集。只有能够满足该策略最低回收量时，较早且合格的结果才会被改写。表中 History 触发值、最小回收量与尾窗均为 Auto Compact 默认水位 80% 下的数值；调整阈值后按 `A = floor(C × a)`（`a = thresholdPercent / 100`，浮点比例）同比缩放（见上文“Auto Compact 阈值”）。
 
 ### Adaptive 的当前限制与上游能力请求
 
@@ -121,7 +128,7 @@ pnpm run verify:release
 
 ## 安装
 
-最新包版本是 `beta` 通道上的 `0.1.0-beta.2`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
+最新包版本是 `beta` 通道上的 `0.1.0-beta.3`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@beta
@@ -135,7 +142,7 @@ dsh --profile web --dump-config
 更新或卸载：
 
 ```sh
-dsh plugin --profile web up dsh-context-compression-selector
+dsh plugin --profile web up dsh-context-compression-selector@beta
 dsh plugin --profile web remove dsh-context-compression-selector
 ```
 
