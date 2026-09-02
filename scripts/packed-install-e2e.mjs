@@ -80,6 +80,19 @@ const captureOutcome = (command, args, options = {}) => new Promise((resolve, re
   child.once('exit', (code, signal) => resolve({ code, signal, stdout, stderr }))
 })
 
+const allocateLoopbackPort = () => new Promise((resolve, reject) => {
+  const server = createServer()
+  server.once('error', reject)
+  server.listen(0, '127.0.0.1', () => {
+    const address = server.address()
+    if (address === null || typeof address === 'string') {
+      server.close(() => reject(new Error('could not allocate a loopback port for the official profile probe')))
+      return
+    }
+    server.close(error => error === undefined ? resolve(address.port) : reject(error))
+  })
+})
+
 const assert = (condition, message) => {
   if (!condition) throw new Error(`packed Host smoke: ${message}`)
 }
@@ -444,8 +457,9 @@ async function runOfficialCloneCliSmoke(referenceRoot, registry, upgradeFrom, ca
    * the AgentPresets service composed the selector's standing overlay, and
    * the overlay's generated composition exists with the deterministic
    * identity filename. Any failure exits non-zero.
-   */
+  */
   const runProfileBootProbe = async (phase, expectSeeded) => {
+    const profilePort = await allocateLoopbackPort()
     const { profileRoot } = profilePackages()
     const settingsProof = expectSeeded
       ? [
@@ -485,7 +499,7 @@ async function runOfficialCloneCliSmoke(referenceRoot, registry, upgradeFrom, ca
       "  environment: appBoot.loadLayeredEnv('dsh'),",
       "  profile: 'web',",
       '  patchFiles: [],',
-      '  args: [],',
+      `  args: ['--host', '127.0.0.1', '--port', ${JSON.stringify(String(profilePort))}, '--no-open'],`,
       '})',
       'try {',
       "  const settings = ctx.get('settings')",
@@ -634,7 +648,7 @@ async function runOfficialCloneCliSmoke(referenceRoot, registry, upgradeFrom, ca
 
     // Standard update command moves BOTH packages; assert before any add.
     await dsh('plugin', '--profile', 'web', 'up',
-      'dsh-context-compression-selector@beta', '--registry', registry)
+      'dsh-context-compression-selector@latest', '--registry', registry)
     const afterUp = profilePackages()
     if (afterUp.selector.version !== candidateVersion || afterUp.runtime.version !== candidateVersion) {
       throw new Error(`official up landed selector ${String(afterUp.selector.version)} / runtime ${String(afterUp.runtime.version)}, expected both at ${String(candidateVersion)}`)
@@ -665,7 +679,7 @@ async function runOfficialCloneCliSmoke(referenceRoot, registry, upgradeFrom, ca
       'official CLI remove left the selector Bundle layer active')
 
     await dsh('plugin', '--profile', 'web', 'add',
-      'dsh-context-compression-selector@beta', '--registry', registry)
+      'dsh-context-compression-selector@latest', '--registry', registry)
     const secondDump = await dumpConfig()
     assert(secondDump.includes('context-compression-selector-bundle'),
       'official CLI reinstall did not restore the selector Bundle layer')
@@ -804,7 +818,7 @@ try {
           }
           const body = JSON.stringify({
             name,
-            'dist-tags': { beta: descriptor.manifest.version },
+            'dist-tags': { latest: descriptor.manifest.version },
             versions: { ...previousVersion, [descriptor.manifest.version]: version },
           })
           response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
@@ -882,7 +896,7 @@ try {
     }
     await run('pnpm', [
       'up',
-      'dsh-context-compression-selector@beta',
+      'dsh-context-compression-selector@latest',
       '--registry', registry,
     ], { cwd: consumerRoot })
     // The up command must land BOTH packages on the packed candidate.
@@ -904,7 +918,7 @@ try {
     console.info(`UPGRADE_LEG_SKIPPED ${upgradeLeg}`)
     await run('pnpm', [
       'add',
-      'dsh-context-compression-selector@beta',
+      'dsh-context-compression-selector@latest',
       ...officialHostPackages,
       '--registry', registry,
     ], { cwd: consumerRoot })
@@ -916,8 +930,8 @@ try {
   const runtime = JSON.parse(await readFile(join(runtimeDir, 'package.json'), 'utf8'))
   if (selector.version !== runtime.version) throw new Error('selector/runtime versions differ')
   if (selector.dependencies?.[runtime.name] !== runtime.version) throw new Error('selector/runtime dependency is not exact')
-  if (selector.publishConfig?.tag !== 'beta' || runtime.publishConfig?.tag !== 'beta') {
-    throw new Error('packed package is not guarded by publishConfig.tag=beta')
+  if (selector.publishConfig?.tag !== 'latest' || runtime.publishConfig?.tag !== 'latest') {
+    throw new Error('packed package is not guarded by publishConfig.tag=latest')
   }
   for (const peer of ['@deepseek-ai/dsh-command-compact', '@deepseek-ai/dsh-compaction-basic']) {
     if (selector.peerDependencies?.[peer] !== '>=0.1.1-rc.2 <0.2.0') {
@@ -1048,7 +1062,7 @@ try {
     throw new Error('release gate requires the official clean-harness lifecycle to run')
   }
   console.info(JSON.stringify({
-    installCommand: 'pnpm add dsh-context-compression-selector@beta',
+    installCommand: 'pnpm add dsh-context-compression-selector@latest',
     e2eMode,
     upgradeLeg,
     artifactSource: fixedArtifactRoot === undefined ? 'fresh-pack' : artifactRoot,

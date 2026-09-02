@@ -97,7 +97,7 @@ for (const [name, manifest] of [
   ['selector', selectorPackage],
 ]) {
   if (manifest.publishConfig?.access !== 'public') fail(`${name} publish access is not public`)
-  if (manifest.publishConfig?.tag !== 'beta') fail(`${name} publish tag is not beta`)
+  if (manifest.publishConfig?.tag !== 'latest') fail(`${name} publish tag is not latest`)
 }
 for (const peer of [
   '@deepseek-ai/dsh-command-compact',

@@ -28,8 +28,8 @@ describe('standalone package contract', () => {
       .toBe('>=0.1.1-rc.2 <0.2.0')
     expect(selector.peerDependencies?.['@deepseek-ai/dsh-command-compact'])
       .toBe('>=0.1.1-rc.2 <0.2.0')
-    expect(selector.publishConfig?.tag).toBe('beta')
-    expect(runtime.publishConfig?.tag).toBe('beta')
+    expect(selector.publishConfig?.tag).toBe('latest')
+    expect(runtime.publishConfig?.tag).toBe('latest')
   })
 
   it('uses the community package in the one Bundle patch', () => {
