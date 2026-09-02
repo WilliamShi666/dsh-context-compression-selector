@@ -2,6 +2,12 @@
 
 All notable changes use this file. The project follows semantic versioning after `0.1.0`.
 
+## 0.1.0-beta.4 - 2026-09-02
+
+### Fixed
+
+- Support the official DeepSeek Harness `dsh-v0.1.2-alpha.5` public API while retaining compatibility with the existing `0.1.1-rc.2` peer range. The plugin now owns the two small immutable-value helpers that the newer Harness no longer exports, and uses the same public `context-compression` namespace literal accepted by both Settings implementations. No Harness core code is modified.
+
 ## 0.1.0-beta.3 - 2026-09-01
 
 ### Scope

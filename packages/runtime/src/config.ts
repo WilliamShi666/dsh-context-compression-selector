@@ -1,6 +1,5 @@
 /** Configuration resolution for the mixed deterministic context-compression selector. */
 
-import { deepFreeze } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import type {
   AutoCompactSettings,
@@ -18,6 +17,7 @@ import {
   resolveCustomPolicy,
   type CustomPolicyResolutionOptions,
 } from './custom-policy.ts'
+import { deepFreeze } from './value.ts'
 
 /** Settings namespace shared by the Host service and browser selector. */
 export const CONTEXT_COMPRESSION_SETTINGS_NAMESPACE = 'context-compression'

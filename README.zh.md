@@ -128,7 +128,7 @@ pnpm run verify:release
 
 ## 安装
 
-最新包版本是 `beta` 通道上的 `0.1.0-beta.3`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
+最新包版本是 `beta` 通道上的 `0.1.0-beta.4`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@beta
@@ -147,3 +147,5 @@ dsh plugin --profile web remove dsh-context-compression-selector
 ```
 
 `latest` 目前有意保留在 `0.1.0-beta.1`；要安装当前版本请使用 `@beta`。
+
+beta 通道兼容既有的 `0.1.1-rc.2` Harness peer 范围，以及官方 `dsh-v0.1.2-alpha.5` 版本。插件只使用 Harness 的公开扩展 API，不会修改 Harness 核心代码。

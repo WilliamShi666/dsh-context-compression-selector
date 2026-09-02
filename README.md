@@ -128,7 +128,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development expectations, [SECURITY.m
 
 ## Install
 
-The newest package release is `0.1.0-beta.3` on the `beta` channel. Install the single Bundle entry package into a Harness profile:
+The newest package release is `0.1.0-beta.4` on the `beta` channel. Install the single Bundle entry package into a Harness profile:
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@beta
@@ -147,3 +147,5 @@ dsh plugin --profile web remove dsh-context-compression-selector
 ```
 
 `latest` intentionally remains `0.1.0-beta.1`; use `@beta` to install the current release.
+
+The beta channel is compatible with the established `0.1.1-rc.2` Harness peer range and the official `dsh-v0.1.2-alpha.5` release. The plugin uses only public Harness extension APIs and does not modify Harness core code.

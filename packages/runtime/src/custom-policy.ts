@@ -1,12 +1,12 @@
 /** Strict versioned Custom policy parsing and effective-token resolution. */
 
-import { deepFreeze } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import type {
   CompressionPolicy,
   CustomCompressionPolicy,
   CustomCompressionPolicyV3,
 } from './types.ts'
+import { deepFreeze } from './value.ts'
 
 const budgetSchema = z.object({
   enabled: z.boolean().required(),

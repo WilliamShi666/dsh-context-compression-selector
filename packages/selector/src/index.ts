@@ -3,7 +3,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
-  settingsNamespace,
   type SettingsScope,
   type default as SettingsService,
 } from '@deepseek-ai/dsh-settings'
@@ -16,7 +15,9 @@ import {
   resolveCompressionModulePaths,
 } from './preset-overlay.ts'
 
-const CONTEXT_COMPRESSION_NAMESPACE = settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE)
+// Harness 0.1.1 exposed a namespace-branding helper; 0.1.2 validates the
+// same public literal at SettingsProvider.register/get instead.
+const CONTEXT_COMPRESSION_NAMESPACE = CONTEXT_COMPRESSION_SETTINGS_NAMESPACE as never
 
 /** Shared state forwarded through every Cordis proxy of one settings service. */
 interface SharedSettingsRegistration {
@@ -81,7 +82,7 @@ export function apply(ctx: Context, config: Config = {}): void {
  * default rather than blocking preset composition.
  */
 function resolveAutoCompactThresholdPercent(presetsCtx: Context): number {
-  const raw = presetsCtx.get('settings')?.get(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE))
+  const raw = presetsCtx.get('settings')?.get(CONTEXT_COMPRESSION_NAMESPACE)
   try {
     const parsed = ContextCompressionSettingsSchema(structuredClone(raw) as never)
     return parsed.autoCompact.thresholdPercent

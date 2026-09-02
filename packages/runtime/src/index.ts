@@ -11,13 +11,12 @@
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { assertNever, deepFreeze, freezeMessage } from '@deepseek-ai/dsh-llm'
+import { freezeMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, ToolResultMessage } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-settings'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type {
   CompactionTokenView,
   ObservedPromptUsage,
@@ -71,6 +70,7 @@ import {
   resolveOfficialDeepSeekPrice,
 } from './deepseek-official-pricing.ts'
 import { emitCompressionAudit } from './audit.ts'
+import { assertNever, deepFreeze } from './value.ts'
 import type {
   CompressionAuditComponent,
   CompressionAuditEvaluationStatus,
@@ -434,7 +434,9 @@ export class ToolResultPruner extends Service {
   private activeSettings(session: Session): ContextCompressionSettings {
     const frozen = this.sessionSettings.get(session)
     if (frozen !== undefined) return frozen
-    const settings = this.ctx.get('settings')?.get(settingsNamespace(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE))
+    // Harness 0.1.1 brands namespace values through a helper while 0.1.2
+    // validates the same public literal at its SettingsProvider boundary.
+    const settings = this.ctx.get('settings')?.get(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE as never)
     let resolved: ContextCompressionSettings
     let settingsSource: 'host-settings' | 'plugin-config-fallback' = settings === undefined
       ? 'plugin-config-fallback'
