@@ -4,6 +4,13 @@
 
 [English README](README.md) · [English courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
+> [!NOTE]
+> **0.1.0 更新内容：**
+>
+> - 为 `deepseek-v4-flash-vision-exp` 添加 DeepSeek 官方 tokenizer。
+> - 用户可在选择器设置中自定义模型驱动上下文压缩（Auto Compact）的触发阈值。
+> - 各 Profile 的上下文压缩策略及相关水位会随该 Auto Compact 阈值联动调整。
+
 > [!IMPORTANT]
 > 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-v4-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash-vision-exp`。其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
 
@@ -25,7 +32,7 @@
 
 ### Auto Compact 阈值
 
-选择器设置页提供 `autoCompact.thresholdPercent`：50%–90% 的整数（步长 1%），默认 80%。`70% / 80% / 85%` 仅是快捷填入值——73% 等任意合法值都可以保存。超出推荐区间 70%–85% 时会显示风险说明，但仍然允许保存。该水位会作为 `thresholdRatio` 写入生成的 `compaction-basic` 组合，并在同一次读取中写入插件 runtime 的部署配置，因此同一个 standing generation 绝不会让 Auto Compact 与 micro compact 运行在两个不同阈值上。它按 `A = floor(C × a)`（`a = thresholdPercent / 100`，以浮点比例参与运算——与 `compaction-basic` 自身的运算顺序一致）联动标准 Profile 的 History 触发值、最小回收量与近期尾窗，以及 micro compact 最后机会水位 `D = floor(A × 0.875)`。默认 80% 在 1M 上下文下完全复现原有数值。Fresh、Aggregate、Native 单结果预算、近期 10 次调用工作集和 Auto Compact retain 比例本版保持不变；Custom 保持手动。
+选择器设置页提供 `autoCompact.thresholdPercent`：50%–90% 的整数（步长 1%），默认 80%。可直接在输入框填写 73% 等任意合法值。超出推荐区间 70%–85% 时会显示风险说明，但仍然允许保存。该水位会作为 `thresholdRatio` 写入生成的 `compaction-basic` 组合，并在同一次读取中写入插件 runtime 的部署配置，因此同一个 standing generation 绝不会让 Auto Compact 与 micro compact 运行在两个不同阈值上。它按 `A = floor(C × a)`（`a = thresholdPercent / 100`，以浮点比例参与运算——与 `compaction-basic` 自身的运算顺序一致）联动标准 Profile 的 History 触发值、最小回收量与近期尾窗，以及 micro compact 最后机会水位 `D = floor(A × 0.875)`。默认 80% 在 1M 上下文下完全复现原有数值。Fresh、Aggregate、Native 单结果预算、近期 10 次调用工作集和 Auto Compact retain 比例本版保持不变；Custom 保持手动。
 
 ![上下文压缩选择器设置界面](docs/assets/context-compression-selector-settings.png)
 
@@ -128,10 +135,10 @@ pnpm run verify:release
 
 ## 安装
 
-最新包版本是 `beta` 通道上的 `0.1.0-beta.4`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
+最新包版本是 `latest` 通道上的 `0.1.0`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
 
 ```sh
-dsh plugin --profile web add dsh-context-compression-selector@beta
+dsh plugin --profile web add dsh-context-compression-selector@latest
 dsh --profile web --dump-config
 ```
 
@@ -142,10 +149,10 @@ dsh --profile web --dump-config
 更新或卸载：
 
 ```sh
-dsh plugin --profile web up dsh-context-compression-selector@beta
+dsh plugin --profile web up dsh-context-compression-selector@latest
 dsh plugin --profile web remove dsh-context-compression-selector
 ```
 
-`latest` 目前有意保留在 `0.1.0-beta.1`；要安装当前版本请使用 `@beta`。
+已安装 beta 的用户可使用同一条 `up ...@latest` 命令升级到这个稳定版。
 
 beta 通道兼容既有的 `0.1.1-rc.2` Harness peer 范围，以及官方 `dsh-v0.1.2-alpha.5` 版本。插件只使用 Harness 的公开扩展 API，不会修改 Harness 核心代码。

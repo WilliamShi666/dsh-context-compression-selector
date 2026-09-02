@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-compression-selector-runtime",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0",
   "description": "Auditable context-compression runtime for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
@@ -56,7 +56,7 @@
   "license": "MIT",
   "publishConfig": {
     "access": "public",
-    "tag": "beta"
+    "tag": "latest"
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.1.3"

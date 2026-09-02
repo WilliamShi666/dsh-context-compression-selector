@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-compression-selector-workspace",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",

@@ -4,6 +4,13 @@
 
 [中文说明](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
+> [!NOTE]
+> **What's new in 0.1.0:**
+>
+> - Adds the official tokenizer for `deepseek-v4-flash-vision-exp`.
+> - Lets users choose the trigger threshold for model-driven Auto Compact in the selector settings.
+> - Links each profile's context-compression strategy and related watermarks to that Auto Compact threshold.
+
 > [!IMPORTANT]
 > This project currently supports **DeepSeek models only**. Its lossless measurement and lossy tool-result compression depend on the bundled official DeepSeek tokenizers. The exact supported model IDs in this release are `deepseek-v4-flash`, `deepseek-v4-pro`, and `deepseek-v4-flash-vision-exp`. Other DeepSeek Harness models, including non-DeepSeek providers, fail open and retain their original tool results.
 
@@ -25,7 +32,7 @@ Choose a compression profile from DeepSeek Harness settings, and set the Auto Co
 
 ### Auto Compact threshold
 
-The selector settings section exposes `autoCompact.thresholdPercent`: an integer between 50% and 90% (step 1%), defaulting to 80%. `70% / 80% / 85%` are quick-fill suggestions only — any value such as 73% saves fine. Values outside the recommended 70–85% band show a risk note but remain savable. The level is written into the generated `compaction-basic` composition as `thresholdRatio` and, from the same read, into the plugin runtime's deployment config, so one standing generation can never run Auto Compact and micro compact on two different thresholds. It rescales the standard-profile History trigger, minimum reclaim, recent-token tail, and the micro-compact last-chance deadline `D = floor(A × 0.875)` around `A = floor(C × a)`, where `a = thresholdPercent / 100` is used as a floating-point ratio — the same arithmetic order `compaction-basic` itself uses. At the default 80% on a 1M context the previous numbers are reproduced exactly. Fresh, Aggregate, Native single-result budgets, the 10-call working set, and the Auto Compact retain ratio are unchanged in this release; Custom stays manual.
+The selector settings section exposes `autoCompact.thresholdPercent`: an integer between 50% and 90% (step 1%), defaulting to 80%. Enter any valid value, such as 73%, directly in the field. Values outside the recommended 70–85% band show a risk note but remain savable. The level is written into the generated `compaction-basic` composition as `thresholdRatio` and, from the same read, into the plugin runtime's deployment config, so one standing generation can never run Auto Compact and micro compact on two different thresholds. It rescales the standard-profile History trigger, minimum reclaim, recent-token tail, and the micro-compact last-chance deadline `D = floor(A × 0.875)` around `A = floor(C × a)`, where `a = thresholdPercent / 100` is used as a floating-point ratio — the same arithmetic order `compaction-basic` itself uses. At the default 80% on a 1M context the previous numbers are reproduced exactly. Fresh, Aggregate, Native single-result budgets, the 10-call working set, and the Auto Compact retain ratio are unchanged in this release; Custom stays manual.
 
 ![Context Compression Selector settings UI](docs/assets/context-compression-selector-settings.png)
 
@@ -128,10 +135,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development expectations, [SECURITY.m
 
 ## Install
 
-The newest package release is `0.1.0-beta.4` on the `beta` channel. Install the single Bundle entry package into a Harness profile:
+The newest package release is `0.1.0` on the `latest` channel. Install the single Bundle entry package into a Harness profile:
 
 ```sh
-dsh plugin --profile web add dsh-context-compression-selector@beta
+dsh plugin --profile web add dsh-context-compression-selector@latest
 dsh --profile web --dump-config
 ```
 
@@ -142,10 +149,10 @@ Restart the selected profile after installation. The config dump should list the
 To update or remove it:
 
 ```sh
-dsh plugin --profile web up dsh-context-compression-selector@beta
+dsh plugin --profile web up dsh-context-compression-selector@latest
 dsh plugin --profile web remove dsh-context-compression-selector
 ```
 
-`latest` intentionally remains `0.1.0-beta.1`; use `@beta` to install the current release.
+Existing beta users can move to this stable release with the same `up ...@latest` command.
 
 The beta channel is compatible with the established `0.1.1-rc.2` Harness peer range and the official `dsh-v0.1.2-alpha.5` release. The plugin uses only public Harness extension APIs and does not modify Harness core code.
