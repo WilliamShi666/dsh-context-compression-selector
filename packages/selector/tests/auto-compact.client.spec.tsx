@@ -126,7 +126,8 @@ describe('Auto Compact threshold controls', () => {
   it('renders the editor only inside the context-compression settings section', () => {
     mountAutoCompact({ settingsSection: true })
     expect(screen.getByLabelText(INPUT_LABEL)).not.toBeNull()
-    expect(screen.getByRole('slider', { name: 'Auto Compact threshold slider' })).not.toBeNull()
+    expect(screen.queryByRole('slider')).toBeNull()
+    for (const quick of ['70%', '80%', '85%']) expect(screen.queryByRole('button', { name: quick })).toBeNull()
 
     // The compact workspace selector shows a summary, never a second editor.
     cleanup()
@@ -167,25 +168,13 @@ describe('Auto Compact threshold controls', () => {
     expect(saveAutoCompact).not.toHaveBeenCalled()
   })
 
-  it('keeps the number input, slider, and quick values on one shared draft', () => {
+  it('uses the typed number input as the only threshold editor', () => {
     mountAutoCompact({ settingsSection: true })
     const input = screen.getByLabelText<HTMLInputElement>(INPUT_LABEL)
-    const slider = screen.getByRole<HTMLInputElement>('slider', { name: 'Auto Compact threshold slider' })
-
-    fireEvent.change(slider, { target: { value: '65' } })
-    expect(input.value).toBe('65')
-    expect(slider.value).toBe('65')
-
-    fireEvent.click(screen.getByRole('button', { name: '85%' }))
-    expect(input.value).toBe('85')
-    expect(slider.value).toBe('85')
-
-    fireEvent.change(input, { target: { value: '70' } })
-    expect(slider.value).toBe('70')
-    for (const quick of ['70%', '80%', '85%']) {
-      const pressed = screen.getByRole('button', { name: quick }).getAttribute('aria-pressed')
-      expect(pressed).toBe(quick === '70%' ? 'true' : 'false')
-    }
+    fireEvent.change(input, { target: { value: '73' } })
+    expect(input.value).toBe('73')
+    expect(screen.queryByRole('slider')).toBeNull()
+    for (const quick of ['70%', '80%', '85%']) expect(screen.queryByRole('button', { name: quick })).toBeNull()
   })
 
   it('explains the risk outside the recommended 70–85 band but keeps saving available', () => {
@@ -206,7 +195,6 @@ describe('Auto Compact threshold controls', () => {
   it('disables every control while saving or when the scope is not writable', () => {
     const { saveAutoCompact } = mountAutoCompact({ settingsSection: true, status: 'loading' })
     expect(screen.getByLabelText<HTMLInputElement>(INPUT_LABEL).disabled).toBe(true)
-    expect(screen.getByRole<HTMLInputElement>('slider').disabled).toBe(true)
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Save Auto Compact threshold' }).disabled).toBe(true)
     expect(saveAutoCompact).not.toHaveBeenCalled()
 
