@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-compression-selector-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Auditable context-compression runtime for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
@@ -24,7 +24,7 @@
     "README.zh.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
-    "assets/deepseek-v4-vision-exp/*"
+    "assets/deepseek-v4.1-flash/*"
   ],
   "scripts": {
     "bundle": "tsdown",

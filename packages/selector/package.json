@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-compression-selector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One-install context-compression selector bundle for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
@@ -76,7 +76,7 @@
     "tag": "latest"
   },
   "dependencies": {
-    "dsh-context-compression-selector-runtime": "0.1.0",
+    "dsh-context-compression-selector-runtime": "0.1.1",
     "js-yaml": "^4.2.0"
   },
   "peerDependencies": {

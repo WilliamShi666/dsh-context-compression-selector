@@ -109,7 +109,7 @@ const COPY: Record<string, string> = {
   'custom.reset': 'Reset Custom policy',
   'custom.invalid': 'Custom policy values are invalid.',
   'status.presetUnavailable': 'This session’s preset does not provide context compression, or availability is not yet confirmed.',
-  'pricing.disclosure': 'DeepSeek official prices checked 2026-08-25. Peak Mon–Fri 09:00–12:00 and 14:00–18:00 Asia/Shanghai; otherwise off-peak. Cross-boundary requests use a cost range.',
+  'pricing.disclosure': 'DeepSeek official prices checked 2026-09-23. Peak Mon–Fri 09:00–12:00 and 14:00–18:00 Asia/Shanghai; otherwise off-peak. Cross-boundary requests use a cost range.',
 }
 
 const DEFAULT_CUSTOM = {
@@ -388,8 +388,8 @@ describe('context compression profiles', () => {
   })
 
   it.each([
-    ['English', en, /checked 2026-08-25.*Mon–Fri 09:00–12:00.*14:00–18:00.*Asia\/Shanghai.*cost range/],
-    ['Simplified Chinese', zh, /2026-08-25.*Asia\/Shanghai.*周一至周五 09:00–12:00.*14:00–18:00.*成本区间/],
+    ['English', en, /checked 2026-09-23.*Mon–Fri 09:00–12:00.*14:00–18:00.*Asia\/Shanghai.*cost range/],
+    ['Simplified Chinese', zh, /2026-09-23.*Asia\/Shanghai.*周一至周五 09:00–12:00.*14:00–18:00.*成本区间/],
   ] as const)('renders the Adaptive price date and schedule in %s', (_label, locale, expected) => {
     const copy = locale as Readonly<Record<string, string>>
     renderReady(vi.fn(() => Promise.resolve()), true, key => copy[key] ?? key)

@@ -3,7 +3,6 @@
   "revision": "0e1a0e5e52aea73055f50fef6f2423db370265b6",
   "license": "MIT",
   "modelIds": [
-    "deepseek-v4-flash",
     "deepseek-v4-pro"
   ],
   "files": {

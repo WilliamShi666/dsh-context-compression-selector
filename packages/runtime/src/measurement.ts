@@ -7,7 +7,7 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-token-meter'
 import type { TokenMeasurement } from '@deepseek-ai/dsh-token-meter'
 import {
-  DEEPSEEK_VISION_TOKENIZER_ARTIFACT,
+  DEEPSEEK_V41_FLASH_TOKENIZER_ARTIFACT,
   deepSeekV4TokenizerForModel,
 } from './deepseek-v4-tokenizer.ts'
 import {
@@ -60,13 +60,15 @@ export interface CanonicalImageAttachment {
 
 /**
  * Intrinsic-grid diagnostic attached to nodes whose count estimates images.
- * It reports ONLY the official block
- * arithmetic evaluated on the attachment's intrinsic dimensions at the two
- * alignment-padding extremes (compress-pad 0 and 3). It is NOT a request-token
- * bound: the adapter may still re-project the image (per-route pixel-budget
- * or image-detail overrides, byte-cap reprojection), which can move the real
- * count below the diagnostic minimum. It never participates in exact gates,
- * rewrite proofs, or any lossy decision.
+ * It reports ONLY the official V4.1 block arithmetic evaluated on the
+ * attachment's intrinsic dimensions. Under V4.1 the block length
+ * (`nLlmH * (nLlmW + 1) + 2`) is a single position-independent value, so
+ * `paddingMinimumTokens === paddingMaximumTokens`; the two fields are retained
+ * for shape stability with earlier revisions. It is
+ * NOT a request-token bound: the adapter may still re-project the image
+ * (per-route pixel-budget or image-detail overrides, byte-cap reprojection),
+ * which can move the real count below this value. It never participates in
+ * exact gates, rewrite proofs, or any lossy decision.
  */
 export interface IntrinsicImageBlockDiagnostic {
   readonly paddingMinimumTokens: number
@@ -100,7 +102,12 @@ interface CanonicalCounter {
   readonly countImage: (attachment: CanonicalImageAttachment) => TokenCount
 }
 
-const VISION_MODEL_ID = DEEPSEEK_VISION_TOKENIZER_ARTIFACT.modelIds[0] as string
+/**
+ * Every model id served by the V4.1-Flash artifact carries the vision image
+ * counter. Membership is a set test, never a positional `modelIds[0]` read, so
+ * adding or reordering ids cannot silently narrow the gate.
+ */
+const VISION_MODEL_IDS: ReadonlySet<string> = new Set(DEEPSEEK_V41_FLASH_TOKENIZER_ARTIFACT.modelIds)
 
 /**
  * Capture one route-bound view without calling patched Harness methods.
@@ -160,9 +167,9 @@ export function officialRequestUsage(view: CompactionTokenView): Readonly<TokenU
  *
  * Text, reasoning, tool-call names/arguments, and nested text tool results are
  * counted exactly with one tokenizer identity. Image blocks produce a bounded
- * estimate because the absolute prompt position and the adapter's final
- * projection are not publicly observable. A mixed text/image node is therefore
- * an estimate and never qualifies for an exact rewrite proof.
+ * estimate because the adapter's final request-image projection is not
+ * publicly observable. A mixed text/image node is therefore an estimate and
+ * never qualifies for an exact rewrite proof.
  */
 function countCanonicalContent(
   blocks: readonly ContentBlock[],
@@ -290,20 +297,19 @@ function bindCounter(provider: string | undefined, model: string | undefined): C
 }
 
 /**
- * Images never claim an exact count. The official expansion depends on the
- * absolute prompt position (system prompt, chat-template framing, adapter
- * image handles) and on the adapter's final request-image projection, neither
- * of which is exposed through a public API; a route may even override the
- * pixel budget or re-project under the byte cap. Valid dimensions therefore
- * use the midpoint of the four alignment residues as a bounded estimate;
- * malformed dimensions use a fixed default. Estimate-bearing nodes remain
- * ineligible for exact rewrite proofs.
+ * Images never claim an exact count. Under V4.1 the official block length is
+ * position-independent, so the only remaining source of inexactness is the
+ * adapter's final request-image projection, which is not exposed through a
+ * public API; a route may even override the pixel budget or re-project under
+ * the byte cap. Valid dimensions therefore use the single official block
+ * length as a bounded estimate; malformed dimensions use a fixed default.
+ * Estimate-bearing nodes remain ineligible for exact rewrite proofs.
  */
 function countCanonicalImage(
   model: string,
   attachment: CanonicalImageAttachment,
 ): TokenCount {
-  if (model !== VISION_MODEL_ID) {
+  if (!VISION_MODEL_IDS.has(model)) {
     return unavailableTokenCount(`canonical image: model "${model}" has no vision image counter`)
   }
   const estimate = estimateDeepSeekVisionImageTokens(attachment.width, attachment.height)
@@ -317,9 +323,10 @@ function countCanonicalImage(
 }
 
 /**
- * Intrinsic-grid diagnostic for one content walk: the official block
- * arithmetic on intrinsic dimensions at both alignment extremes. Only images
- * on the pinned DeepSeek vision route with usable metadata contribute.
+ * Intrinsic-grid diagnostic for one content walk: the official V4.1 block
+ * arithmetic on intrinsic dimensions, a single position-independent value
+ * reported as both the minimum and the maximum. Only images on the pinned
+ * DeepSeek vision route with usable metadata contribute.
  */
 function intrinsicImageDiagnostic(
   blocks: readonly ContentBlock[],
@@ -329,7 +336,7 @@ function intrinsicImageDiagnostic(
   // official-arithmetic bounds.
   if (target === undefined
     || (target.provider !== 'deepseek' && target.provider !== 'deepseek-official')
-    || target.model !== VISION_MODEL_ID) return undefined
+    || !VISION_MODEL_IDS.has(target.model)) return undefined
   let paddingMinimumTokens = 0
   let paddingMaximumTokens = 0
   let seen = false
@@ -353,7 +360,11 @@ function intrinsicImageDiagnostic(
   return seen ? Object.freeze({ paddingMinimumTokens, paddingMaximumTokens }) : undefined
 }
 
-function countSurfaceCounts(counts: readonly TokenCount[], subject: string): TokenCount {
+/**
+ * Combine one surface's per-node counts under a single identity.
+ * @internal exported for direct mixed-identity guard tests.
+ */
+export function countSurfaceCounts(counts: readonly TokenCount[], subject: string): TokenCount {
   if (counts.length === 0) return unavailableTokenCount(`${subject}: no surface nodes`)
   let identity: Extract<TokenCount, { kind: 'exact-tokenizer' }> | undefined
   let estimateIdentity: Pick<TokenizerEstimateTokenCount, 'estimatorId' | 'estimatorRevision'> | undefined

@@ -1,8 +1,10 @@
 {
-  "repository": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
-  "revision": "6821d6ad3681a4b137b066b76094fa82ebd0a380",
+  "repository": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "revision": "dba1be0a40aa45a94ad051997016db3960a90277",
   "license": "MIT",
   "modelIds": [
+    "deepseek-flash",
+    "deepseek-v4-flash",
     "deepseek-v4-flash-vision-exp"
   ],
   "files": {
@@ -14,9 +16,9 @@
       "bytes": 801,
       "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
     },
-    "LICENSE.DeepSeek-V4-Flash-Vision-Exp.txt": {
-      "bytes": 1065,
-      "sha256": "6e4c38e1172f42fdbff13edf9a7a017679fb82b0fde415a3e8b3c31c6ed4a4e4"
+    "LICENSE.DeepSeek-V4.1-Flash.txt": {
+      "bytes": 1084,
+      "sha256": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040"
     }
   }
 }

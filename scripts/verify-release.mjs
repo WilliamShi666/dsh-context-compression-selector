@@ -60,8 +60,8 @@ const packedComponents = await readFile(join(root, 'scripts/packed-components-sm
 for (const required of [
   'Runtime.measureForCompaction(visionCtx, visionImage)',
   "estimatedImageCount?.kind === 'tokenizer-estimate'",
-  'estimatedImageCount.tokens === 340',
-  'estimatedImageCount.upperBoundTokens === 384',
+  'estimatedImageCount.tokens === 317',
+  'estimatedImageCount.upperBoundTokens === 1024',
   'imageMeasurement.currentSurface.kind',
 ]) {
   if (!packedComponents.includes(required)) {
@@ -70,8 +70,8 @@ for (const required of [
 }
 for (const required of [
   "packedVisionSmoke.imageSession?.measurement?.kind === 'tokenizer-estimate'",
-  'packedVisionSmoke.imageSession.measurement.tokens === 340',
-  'packedVisionSmoke.imageSession.measurement.upperBoundTokens === 384',
+  'packedVisionSmoke.imageSession.measurement.tokens === 317',
+  'packedVisionSmoke.imageSession.measurement.upperBoundTokens === 1024',
   'packedVisionSmoke.imageSession.measurement.estimatorId',
   'packedVisionSmoke.imageSession.measurement.estimatorRevision',
 ]) {
@@ -118,13 +118,13 @@ const assetManifests = [
   {
     directory: 'deepseek-v4',
     repository: 'deepseek-ai/DeepSeek-V4-Pro',
-    modelIds: 'deepseek-v4-flash","deepseek-v4-pro',
+    modelIds: 'deepseek-v4-pro',
   },
   {
-    directory: 'deepseek-v4-vision-exp',
-    repository: 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp',
-    revision: '6821d6ad3681a4b137b066b76094fa82ebd0a380',
-    modelIds: 'deepseek-v4-flash-vision-exp',
+    directory: 'deepseek-v4.1-flash',
+    repository: 'deepseek-ai/DeepSeek-V4.1-Flash',
+    revision: 'dba1be0a40aa45a94ad051997016db3960a90277',
+    modelIds: 'deepseek-flash","deepseek-v4-flash","deepseek-v4-flash-vision-exp',
   },
 ]
 for (const expected of assetManifests) {

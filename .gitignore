@@ -11,3 +11,7 @@ coverage/
 .DS_Store
 .pnpm-store/
 release-artifacts/
+
+# AgentTeams runtime state (rosters, task ledgers, mailboxes) is local
+# coordination state, not project source.
+.agent-teams/

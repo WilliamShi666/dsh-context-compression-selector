@@ -7,12 +7,12 @@
 > [!NOTE]
 > **0.1.0 更新内容：**
 >
-> - 为 `deepseek-v4-flash-vision-exp` 添加 DeepSeek 官方 tokenizer。
+> - 新增 DeepSeek-V4.1-Flash 支持：默认路由 `deepseek-flash` 现在可解析出精确 tokenizer，视觉图片 token 算术已按 V4.1 image processor 重移植。
 > - 用户可在选择器设置中自定义模型驱动上下文压缩（Auto Compact）的触发阈值。
 > - 各 Profile 的上下文压缩策略及相关水位会随该 Auto Compact 阈值联动调整。
 
 > [!IMPORTANT]
-> 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-v4-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash-vision-exp`。其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
+> 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-flash`、`deepseek-v4-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash-vision-exp`。其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
 
 ## 它解决什么问题
 
@@ -47,15 +47,16 @@
 
 运行时随包提供固定版本的 DeepSeek V4 官方 tokenizer 资源，并验证其 SHA-256。精确 token 测量是安全前提：没有它时，插件不会执行有损改写。
 
-| 模型路由 | 选择器压缩 |
-| --- | --- |
-| `deepseek-v4-flash` | 支持 |
-| `deepseek-v4-pro` | 支持 |
-| `deepseek-v4-flash-vision-exp` | 支持：文本精确计数及有界图片 token 估算；含图片的改写候选仍不具备 exact 资格并保持原样 |
-| 其他 DeepSeek 模型 id | 不支持；安全降级 |
-| DeepSeek Harness 中的非 DeepSeek 模型 | 不支持；安全降级 |
+| 模型路由 | 服务模型 | 选择器压缩 |
+| --- | --- | --- |
+| `deepseek-flash` | `DeepSeek-V4.1-Flash` | 支持：文本精确计数及有界图片 token 估算；含图片的改写候选仍不具备 exact 资格并保持原样 |
+| `deepseek-v4-flash` | `DeepSeek-V4.1-Flash` | 支持 |
+| `deepseek-v4-flash-vision-exp` | `DeepSeek-V4.1-Flash` | 支持：文本精确计数及有界图片 token 估算；含图片的改写候选仍不具备 exact 资格并保持原样 |
+| `deepseek-v4-pro` | `DeepSeek-V4-Pro` | 支持 |
+| 其他 DeepSeek 模型 id | — | 不支持；安全降级 |
+| DeepSeek Harness 中的非 DeepSeek 模型 | — | 不支持；安全降级 |
 
-视觉模型由独立捆绑的官方 tokenizer 提供服务，固定在 `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` revision `6821d6ad3681a4b137b066b76094fa82ebd0a380`——它不能被当作文本 Flash 的别名。视觉图片 token 使用官方图像处理算术的逐行移植计算（patch 14、downsample 3、384 token 上限、最小像素、宽高比裁剪与依赖位置的对齐 padding），并以官方 Python 参考实现生成的 golden fixtures 逐项验证。有效图片以 `tokenizer-estimate` 上报：根据持久化 intrinsic 尺寸计算四种可能的对齐位置并取中值，同时保留每张图片 384 token 的保守上限；尺寸畸形或无法计算时固定计为 256 token，不再使整个视觉 surface 变为不可用。这些数值仍是估算，因为当前计量边界没有公开绝对 prompt 位置及 adapter 最终请求图片投影（包括按路由覆盖像素预算和字节上限二次投影）；例如 800×800 上传被投影为 512×512 时，实际 token 会与 intrinsic 估算产生较大差异。估算值改善压力统计，但不会授权有损改写：含图片的工具结果候选仍不具备 exact 资格，不会被改写、删除或按零 token 计。若上游以后公开投影后尺寸与绝对序列化位置，即可进一步升级为精确计数。
+V4.1-Flash 各路由由捆绑的官方 tokenizer 提供服务，固定在 `deepseek-ai/DeepSeek-V4.1-Flash` revision `dba1be0a40aa45a94ad051997016db3960a90277`；`deepseek-v4-pro` 保留自己独立固定的 `deepseek-ai/DeepSeek-V4-Pro` tokenizer。两套词表绝不互为别名。视觉图片 token 使用官方 V4.1 图像处理算术的逐行移植计算（patch 14、downsample 3、1024 token 上限、最小像素 295936，且官方 config 将 `max_wh_ratio` 固定为 `null` 故无宽高比裁剪），并以官方 Python 参考实现生成的 golden fixtures 逐项验证。V4.1 的块长度恒为 `nLlmH * (nLlmW + 1) + 2`，不含任何对齐 padding，因此与绝对序列化位置无关。有效图片以该块长度上报为 `tokenizer-estimate`，同时保留每张图片 1024 token 的保守上限；尺寸畸形或无法计算时固定计为 256 token，不再使整个视觉 surface 变为不可用。这些数值仍是估算，因为当前计量边界没有公开 adapter 最终请求图片投影（包括按路由覆盖像素预算和字节上限二次投影）；例如 800×800 上传被投影为 512×512 时，实际 token 会与 intrinsic 估算产生较大差异。估算值改善压力统计，但不会授权有损改写：含图片的工具结果候选仍不具备 exact 资格，不会被改写、删除或按零 token 计。若上游以后公开投影后尺寸，即可进一步升级为精确计数。
 
 “安全降级”表示原始工具结果会保留在上下文中，并产生可审计的跳过或失败记录。选择器不会使用字符数估算 token，也不能被当成通用、多提供商的压缩器。
 

@@ -26,8 +26,8 @@ SOFTWARE.
 
 This package also distributes `tokenizer.json` and `tokenizer_config.json` from these pinned official repositories, both under the MIT license:
 
-- `deepseek-ai/DeepSeek-V4-Pro` revision `0e1a0e5e52aea73055f50fef6f2423db370265b6` (serves `deepseek-v4-flash` and `deepseek-v4-pro`), in `assets/deepseek-v4/`.
-- `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` revision `6821d6ad3681a4b137b066b76094fa82ebd0a380` (serves `deepseek-v4-flash-vision-exp`), in `assets/deepseek-v4-vision-exp/`. This tokenizer is a distinct artifact, not an alias of the V4 Pro tokenizer.
+- `deepseek-ai/DeepSeek-V4-Pro` revision `0e1a0e5e52aea73055f50fef6f2423db370265b6` (serves `deepseek-v4-pro`), in `assets/deepseek-v4/`.
+- `deepseek-ai/DeepSeek-V4.1-Flash` revision `dba1be0a40aa45a94ad051997016db3960a90277` (serves `deepseek-flash`, `deepseek-v4-flash`, and `deepseek-v4-flash-vision-exp`), in `assets/deepseek-v4.1-flash/`. This tokenizer is a distinct artifact, not an alias of the V4-Pro tokenizer.
 
 The exact provenance and SHA-256 values are in each directory's `manifest.json`; the upstream license text ships beside the assets. The vision image-token arithmetic is a port of the repository's `inference/image_processor.py` at the same pinned revision.
 

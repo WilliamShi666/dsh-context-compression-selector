@@ -9,10 +9,10 @@ const TOKENIZER_ID = 'deepseek-ai/DeepSeek-V4-Pro'
 const TOKENIZER_REVISION = '0e1a0e5e52aea73055f50fef6f2423db370265b6'
 const TOKENIZER_SHA256 = '8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf'
 const CONFIG_SHA256 = '6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547'
-const VISION_TOKENIZER_ID = 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
-const VISION_TOKENIZER_REVISION = '6821d6ad3681a4b137b066b76094fa82ebd0a380'
-const VISION_TOKENIZER_SHA256 = 'c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b'
-const VISION_CONFIG_SHA256 = '6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547'
+const V41_FLASH_TOKENIZER_ID = 'deepseek-ai/DeepSeek-V4.1-Flash'
+const V41_FLASH_TOKENIZER_REVISION = 'dba1be0a40aa45a94ad051997016db3960a90277'
+const V41_FLASH_TOKENIZER_SHA256 = 'c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b'
+const V41_FLASH_CONFIG_SHA256 = '6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547'
 
 /** Auditable origin and compatibility mapping for one bundled tokenizer. */
 export interface DeepSeekTokenizerArtifactOrigin {
@@ -35,22 +35,28 @@ export const DEEPSEEK_V4_TOKENIZER_ARTIFACT: DeepSeekTokenizerArtifactOrigin = O
   license: 'MIT',
   tokenizerSha256: TOKENIZER_SHA256,
   tokenizerConfigSha256: CONFIG_SHA256,
-  modelIds: Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']),
+  modelIds: Object.freeze(['deepseek-v4-pro']),
 })
 
 /**
- * Auditable origin and compatibility mapping for the bundled V4 Flash Vision
- * tokenizer. The vision repository ships a distinct `tokenizer.json` (it adds
- * the `<｜deepseek_image｜>` special token), so the vision model must never be
- * mapped onto the V4 Pro tokenizer as an alias.
+ * Auditable origin and compatibility mapping for the bundled V4.1-Flash
+ * tokenizer.
+ *
+ * `deepseek-flash` is the default DeepSeek API model and is served by
+ * DeepSeek-V4.1-Flash; `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp`
+ * are compatibility aliases routed to the same served model. All three ids
+ * therefore share ONE artifact, and this artifact is deliberately never treated
+ * as an alias of the V4-Pro tokenizer: the vocabularies differ (the V4.1
+ * vocabulary knows `<｜deepseek_image｜>` as a single token while the V4-Pro
+ * vocabulary does not, and vice versa for `<｜image｜>`).
  */
-export const DEEPSEEK_VISION_TOKENIZER_ARTIFACT: DeepSeekTokenizerArtifactOrigin = Object.freeze({
-  repository: VISION_TOKENIZER_ID,
-  revision: VISION_TOKENIZER_REVISION,
+export const DEEPSEEK_V41_FLASH_TOKENIZER_ARTIFACT: DeepSeekTokenizerArtifactOrigin = Object.freeze({
+  repository: V41_FLASH_TOKENIZER_ID,
+  revision: V41_FLASH_TOKENIZER_REVISION,
   license: 'MIT',
-  tokenizerSha256: VISION_TOKENIZER_SHA256,
-  tokenizerConfigSha256: VISION_CONFIG_SHA256,
-  modelIds: Object.freeze(['deepseek-v4-flash-vision-exp']),
+  tokenizerSha256: V41_FLASH_TOKENIZER_SHA256,
+  tokenizerConfigSha256: V41_FLASH_CONFIG_SHA256,
+  modelIds: Object.freeze(['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']),
 })
 
 /** Synchronous exact counter backed only by the verified local V4 artifacts. */
@@ -92,11 +98,11 @@ const ARTIFACTS: readonly TokenizerArtifact[] = Object.freeze([
     }),
   }),
   Object.freeze({
-    origin: DEEPSEEK_VISION_TOKENIZER_ARTIFACT,
-    assetRoot: new URL('../assets/deepseek-v4-vision-exp/', import.meta.url),
+    origin: DEEPSEEK_V41_FLASH_TOKENIZER_ARTIFACT,
+    assetRoot: new URL('../assets/deepseek-v4.1-flash/', import.meta.url),
     integrity: Object.freeze({
-      tokenizer: Object.freeze({ bytes: 6_367_257, sha256: VISION_TOKENIZER_SHA256 }),
-      config: Object.freeze({ bytes: 801, sha256: VISION_CONFIG_SHA256 }),
+      tokenizer: Object.freeze({ bytes: 6_367_257, sha256: V41_FLASH_TOKENIZER_SHA256 }),
+      config: Object.freeze({ bytes: 801, sha256: V41_FLASH_CONFIG_SHA256 }),
     }),
   }),
 ])

@@ -1,8 +1,12 @@
 /** Checked-in DeepSeek official prices and fixed-point provider-usage accounting. */
 
-export const DEEPSEEK_OFFICIAL_PRICE_CATALOG_VERSION = 'deepseek-official-2026-08-25' as const
-/** Wall-clock time at which the checked-in official price pages were verified. */
-export const DEEPSEEK_OFFICIAL_PRICE_CHECKED_AT = '2026-08-25T00:10:20+08:00' as const
+export const DEEPSEEK_OFFICIAL_PRICE_CATALOG_VERSION = 'deepseek-official-2026-09-23' as const
+/**
+ * Wall-clock time at which the checked-in official price pages were verified.
+ * This timestamp covers EVERY bundled row: a partial re-verification must not
+ * leave some rows silently reported as fresher than they are.
+ */
+export const DEEPSEEK_OFFICIAL_PRICE_CHECKED_AT = '2026-09-23T01:48:36+08:00' as const
 
 /** Currencies published by the checked-in DeepSeek price catalog. */
 export type DeepSeekPriceCurrency = 'USD' | 'CNY'
@@ -12,6 +16,7 @@ export type DeepSeekPriceBand = 'peak' | 'off-peak'
 export type DeepSeekPriceApiRoute = 'chat-completions' | 'responses'
 /** Exact official V4 model ids covered by this catalog version. */
 export type OfficialDeepSeekModelId =
+  | 'deepseek-flash'
   | 'deepseek-v4-flash'
   | 'deepseek-v4-pro'
   | 'deepseek-v4-flash-vision-exp'
@@ -56,22 +61,37 @@ interface ModelPrices {
   readonly CNY: Readonly<Record<DeepSeekPriceBand, readonly [string, string, string]>>
 }
 
+/**
+ * The single V4.1-Flash price tuple.
+ *
+ * `deepseek-flash`, `deepseek-v4-flash`, and `deepseek-v4-flash-vision-exp` are
+ * all served by DeepSeek-V4.1-Flash, so all three share this one object rather
+ * than repeating the strings: they cannot drift apart by construction.
+ */
+const V41_FLASH_PRICES: ModelPrices = modelPrices(
+  'DeepSeek-V4.1-Flash',
+  ['0.003', '0.15', '0.6'], ['0.006', '0.3', '1.2'],
+  ['0.02', '1', '4'], ['0.04', '2', '8'],
+)
+
 const PRICES: Readonly<Record<OfficialDeepSeekModelId, ModelPrices>> = Object.freeze({
-  'deepseek-v4-flash': modelPrices(
-    'DeepSeek-V4-Flash-0731',
-    ['0.007', '0.22', '0.66'], ['0.014', '0.44', '1.32'],
-    ['0.05', '1.5', '4.5'], ['0.10', '3.0', '9.0'],
-  ),
+  // `deepseek-flash` is the current name and is priced on its own published tuple.
+  'deepseek-flash': V41_FLASH_PRICES,
+  // `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are retired names the
+  // API still accepts. The official pricing page states that their requests are
+  // served by DeepSeek-V4.1-Flash and "billed at the Flash price", so they carry
+  // the V4.1-Flash tuple rather than the withdrawn V4-Flash one. This matters
+  // beyond bookkeeping: `inputCacheHit` feeds the conservative adaptive cost
+  // decision, and the old cache-miss-minus-hit spread (0.213) would
+  // systematically overstate cache loss against the Flash spread (0.147).
+  'deepseek-v4-flash': V41_FLASH_PRICES,
+  // `deepseek-v4-pro` keeps its own published tuple (frozen; see spec §6.3).
   'deepseek-v4-pro': modelPrices(
     'DeepSeek-V4-Pro-0813',
     ['0.022', '0.66', '1.98'], ['0.044', '1.32', '3.96'],
     ['0.15', '4.5', '13.5'], ['0.30', '9.0', '27.0'],
   ),
-  'deepseek-v4-flash-vision-exp': modelPrices(
-    'DeepSeek-V4-Flash-Vision-Exp',
-    ['0.007', '0.22', '0.66'], ['0.014', '0.44', '1.32'],
-    ['0.05', '1.5', '4.5'], ['0.10', '3.0', '9.0'],
-  ),
+  'deepseek-v4-flash-vision-exp': V41_FLASH_PRICES,
 })
 
 const PEAK_RULE = 'Asia/Shanghai Mon-Fri 09:00-12:00,14:00-18:00' as const

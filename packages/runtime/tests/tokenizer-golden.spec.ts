@@ -25,17 +25,27 @@ const fixture = JSON.parse(readFileSync(
 
 const MODEL_BY_TOKENIZER: Readonly<Record<string, string>> = {
   'deepseek-ai/DeepSeek-V4-Pro': 'deepseek-v4-pro',
-  'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp': 'deepseek-v4-flash-vision-exp',
+  'deepseek-ai/DeepSeek-V4.1-Flash': 'deepseek-flash',
 }
 
 describe('bundled tokenizers match Hugging Face Python golden counts', () => {
   it('carries cases for both pinned artifacts with distinct vocabularies', () => {
     expect(Object.keys(fixture.tokenizers).sort()).toEqual(Object.keys(MODEL_BY_TOKENIZER).sort())
+    expect(Object.keys(fixture.tokenizers).sort())
+      .toEqual(['deepseek-ai/DeepSeek-V4-Pro', 'deepseek-ai/DeepSeek-V4.1-Flash'].sort())
     // At least one case must prove the vocabularies differ (vision-only special token).
     const imageCase = fixture.cases.find(entry => entry.text.includes('deepseek_image'))
     expect(imageCase).toBeDefined()
     expect(imageCase?.counts['deepseek-ai/DeepSeek-V4-Pro'])
-      .not.toBe(imageCase?.counts['deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'])
+      .not.toBe(imageCase?.counts['deepseek-ai/DeepSeek-V4.1-Flash'])
+    // Frozen values: the V4.1 vocabulary knows the vision placeholder as one token.
+    expect(imageCase?.counts['deepseek-ai/DeepSeek-V4.1-Flash']).toBe(3)
+    expect(imageCase?.counts['deepseek-ai/DeepSeek-V4-Pro']).toBe(9)
+  })
+
+  it('pins the V4.1-Flash revision in the fixture', () => {
+    expect(fixture.tokenizers['deepseek-ai/DeepSeek-V4.1-Flash'])
+      .toBe('dba1be0a40aa45a94ad051997016db3960a90277')
   })
 
   it.each(fixture.cases)('counts "$label" identically in every tokenizer', (entry) => {

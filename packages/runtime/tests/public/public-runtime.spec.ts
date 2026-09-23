@@ -44,7 +44,11 @@ import ToolResultPruner, {
   resolvePolicy,
 } from '../../src/index.ts'
 import type { CustomCompressionPolicy } from '../../src/index.ts'
-import { DEEPSEEK_V4_TOKENIZER_ARTIFACT, deepSeekV4TokenizerForModel } from '../../src/deepseek-v4-tokenizer.ts'
+import {
+  DEEPSEEK_V41_FLASH_TOKENIZER_ARTIFACT,
+  DEEPSEEK_V4_TOKENIZER_ARTIFACT,
+  deepSeekV4TokenizerForModel,
+} from '../../src/deepseek-v4-tokenizer.ts'
 import {
   DEEPSEEK_VISION_DEFAULT_IMAGE_TOKENS,
   DEEPSEEK_VISION_IMAGE_ESTIMATOR,
@@ -291,8 +295,8 @@ describe('standalone runtime on published Harness APIs', () => {
     expect(tokenizer?.countText('DeepSeek Harness').tokens).toBeGreaterThan(0)
     expect(deepSeekV4TokenizerForModel('deepseek-v4-flash-vision-exp')?.countText('DeepSeek Harness')).toMatchObject({
       kind: 'exact-tokenizer',
-      tokenizerId: 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp',
-      tokenizerRevision: '6821d6ad3681a4b137b066b76094fa82ebd0a380',
+      tokenizerId: 'deepseek-ai/DeepSeek-V4.1-Flash',
+      tokenizerRevision: 'dba1be0a40aa45a94ad051997016db3960a90277',
     })
     expect(deepSeekV4TokenizerForModel('deepseek-v4-flash-vision')).toBeUndefined()
   })
@@ -839,8 +843,8 @@ describe('standalone runtime on published Harness APIs', () => {
       },
       route: { provider: 'deepseek', model: MODEL },
       tokenizer: {
-        repository: 'deepseek-ai/DeepSeek-V4-Pro',
-        revision: DEEPSEEK_V4_TOKENIZER_ARTIFACT.revision,
+        repository: 'deepseek-ai/DeepSeek-V4.1-Flash',
+        revision: DEEPSEEK_V41_FLASH_TOKENIZER_ARTIFACT.revision,
       },
     })
 
@@ -2190,8 +2194,8 @@ describe('standalone runtime on published Harness APIs', () => {
       .filter(record => record.sessionId === String(session.id))
     expect(visionRewrites.length).toBeGreaterThanOrEqual(2)
     for (const record of visionRewrites) {
-      expect(record.tokenizerId).toBe('deepseek-ai/DeepSeek-V4-Flash-Vision-Exp')
-      expect(record.tokenizerRevision).toBe('6821d6ad3681a4b137b066b76094fa82ebd0a380')
+      expect(record.tokenizerId).toBe('deepseek-ai/DeepSeek-V4.1-Flash')
+      expect(record.tokenizerRevision).toBe('dba1be0a40aa45a94ad051997016db3960a90277')
     }
     // Fresh is disabled by its trigger; Aggregate is the pre-compression stage
     // that lands on the vision route for the oversized new result.
@@ -2309,17 +2313,178 @@ describe('standalone runtime on published Harness APIs', () => {
     // Text-only siblings keep their exact counts.
     expect(view.measuredNodes.find(entry => entry.seq === textOnly.seq)?.count).toMatchObject({
       kind: 'exact-tokenizer',
-      tokenizerId: 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp',
+      tokenizerId: 'deepseek-ai/DeepSeek-V4.1-Flash',
     })
-    // The official arithmetic is attached as an INTRINSIC diagnostic (the
-    // padding extremes on intrinsic dimensions), explicitly not a request
-    // bound: the adapter may still re-project the image.
+    // The official arithmetic is attached as an INTRINSIC diagnostic. Under
+    // V4.1 the block length is position-independent, so both alignment
+    // extremes collapse onto the same value.
     const grid = deepSeekVisionImageGrid(640, 480)
+    expect(grid).toMatchObject({ nLlmH: 12, nLlmW: 16 })
     expect(node.intrinsicImageBlockEstimate).toMatchObject({
       paddingMinimumTokens: deepSeekVisionImageBlockTokens(grid.nLlmH, grid.nLlmW, 3),
       paddingMaximumTokens: deepSeekVisionImageBlockTokens(grid.nLlmH, grid.nLlmW, 0),
     })
+    expect(node.intrinsicImageBlockEstimate?.paddingMinimumTokens)
+      .toBe(node.intrinsicImageBlockEstimate?.paddingMaximumTokens)
+    expect(node.intrinsicImageBlockEstimate?.paddingMinimumTokens).toBe(206)
     expect(view.intrinsicImageBlockEstimateTokens).toBe(node.intrinsicImageBlockEstimate?.paddingMinimumTokens)
+  })
+
+  it.each([
+    'deepseek-flash',
+    'deepseek-v4-flash',
+    'deepseek-v4-flash-vision-exp',
+  ])('gates image counting on the V4.1-Flash model id %s', async (model) => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId(`public-vision-model-${model}`))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [imageBlock(640, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    expect(view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count).toMatchObject({
+      kind: 'tokenizer-estimate',
+      estimatorId: 'deepseek-ai/DeepSeek-V4.1-Flash/image-token-estimate',
+      estimatorRevision: 'dba1be0a40aa45a94ad051997016db3960a90277:v1',
+    })
+  })
+
+  it('counts text exactly on a deepseek-flash route', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-flash-text-exact'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: 'deepseek-flash' } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'deepseek-flash exact text' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    expect(view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count).toMatchObject({
+      kind: 'exact-tokenizer',
+      tokenizerId: 'deepseek-ai/DeepSeek-V4.1-Flash',
+      tokenizerRevision: 'dba1be0a40aa45a94ad051997016db3960a90277',
+    })
+    expect(view.currentSurface.kind).toBe('exact-tokenizer')
+  })
+
+  it('refuses image counting for a non-V4.1 DeepSeek model', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-v4pro-image-node'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: 'deepseek-v4-pro' } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [imageBlock(640, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    const count = view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count
+    expect(count).toMatchObject({ kind: 'unavailable' })
+    if (count?.kind !== 'unavailable') throw new Error('V4-Pro images must be unavailable')
+    expect(count.reason).toContain('canonical image: model "deepseek-v4-pro" has no vision image counter')
+    expect(view.intrinsicImageBlockEstimateTokens).toBe(0)
+  })
+
+  it('keeps a mixed text/image candidate exact-ineligible on a deepseek-flash route', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-flash-mixed-ineligible'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: 'deepseek-flash' } }),
+    })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'describe this' },
+        imageBlock(800, 600),
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    const node = view.measuredNodes.find(entry => entry.seq === userMessage.seq)
+    expect(node?.count).toMatchObject({
+      kind: 'tokenizer-estimate',
+    })
+    if (node?.count.kind !== 'tokenizer-estimate') throw new Error('mixed node must be an estimate')
+    // The image component contributes the 1024-token upper bound on top of the
+    // exactly counted text, so the node bound exceeds the per-image bound.
+    expect(node.count.upperBoundTokens).toBeGreaterThanOrEqual(1024)
+    expect(node.count.upperBoundTokens).toBeGreaterThanOrEqual(node.count.tokens)
+    // The whole surface is an estimate even though the text tokenizer now resolves.
+    expect(view.currentSurface.kind).toBe('tokenizer-estimate')
+  })
+
+  it('never lossily rewrites an image-bearing tool result on a deepseek-flash route', async () => {
+    const ctx = await runtimeContext()
+    await ctx.plugin(ToolResultPruner, {
+      profile: 'balanced',
+      freshTriggerTokens: 10,
+      freshTargetTokens: 8,
+      aggregateTriggerTokens: 10,
+      aggregateTargetTokens: 8,
+      historyTriggerTokens: 10,
+      historyKeepRecentToolCalls: 0,
+      historyKeepRecentTokens: 1,
+      historyMinReclaimTokens: 1,
+    }).await()
+    const session = Session.create(SessionId('public-flash-image-tool-result'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', {
+      reason: 'initial',
+      header: canonicalHeader({ config: { provider: 'deepseek', model: 'deepseek-flash' } }),
+    })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: CallId('flash-image-call'), name: 'screenshot', arguments: '{}' }],
+        source: { kind: 'model', provider: 'deepseek', model: 'deepseek-flash' },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn: 1, step: 1, callId: CallId('flash-image-call'), name: 'screenshot', arguments: '{}' })
+    const imageResult = session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: CallId('flash-image-call'),
+        content: [
+          { type: 'text', text: 'screenshot captured' },
+          imageBlock(800, 600),
+        ],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    session.append('turn/start', { turn: 2 })
+
+    const fresh = ctx.toolResultPruner.pruneSession(session, { stage: 'fresh', freshTurn: 1, freshStep: 1 })
+    const pressure = ctx.toolResultPruner.pruneSession(session, { stage: 'pressure' })
+
+    expect(fresh.pruned).toHaveLength(0)
+    expect(pressure.pruned).toHaveLength(0)
+    const original = session.events[imageResult.seq]
+    expect(original?.type).toBe('tool/result')
   })
 
   it('estimates over-budget image metadata instead of making the surface unavailable', async () => {
@@ -2414,7 +2579,7 @@ describe('standalone runtime on published Harness APIs', () => {
     })
   })
 
-  it('keeps image content unavailable for non-vision models', async () => {
+  it('now counts images for the deepseek-v4-flash alias of the V4.1 artifact', async () => {
     const ctx = await runtimeContext()
     const session = Session.create(SessionId('public-text-model-image-node'))
     session.append('turn/start', { turn: 1 })
@@ -2429,8 +2594,11 @@ describe('standalone runtime on published Harness APIs', () => {
 
     const view = measureForCompaction(ctx, session)
 
+    // MODEL is `deepseek-v4-flash`, which the V4.1-Flash artifact serves, so the
+    // image counter is now available instead of failing closed.
     expect(view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count).toMatchObject({
-      kind: 'unavailable',
+      kind: 'tokenizer-estimate',
+      estimatorId: DEEPSEEK_VISION_IMAGE_ESTIMATOR.id,
     })
   })
 
@@ -2449,8 +2617,50 @@ describe('standalone runtime on published Harness APIs', () => {
 
     const view = measureForCompaction(ctx, session)
 
-    expect(view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count).toMatchObject({
+    const count = view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count
+    expect(count).toMatchObject({ kind: 'unavailable' })
+    if (count?.kind !== 'unavailable') throw new Error('foreign-provider image must be unavailable')
+    expect(count.reason).toContain('canonical image: provider "openai" is not the supported DeepSeek route')
+    expect(view.currentSurface).toMatchObject({ kind: 'unavailable' })
+    // The intrinsic diagnostic mirrors the same provider gate, so no image
+    // bound is attributed to a foreign route.
+    expect(view.intrinsicImageBlockEstimateTokens).toBe(0)
+  })
+
+  it('reports the no-durable-header reason templates when the request header is missing', async () => {
+    const ctx = await runtimeContext()
+    const session = Session.create(SessionId('public-no-request-header'))
+    session.append('turn/start', { turn: 1 })
+    const userMessage = session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'no header text' },
+        imageBlock(640, 480),
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const imageOnly = session.append('user/message', createUserMessage({
+      content: [imageBlock(640, 480)],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const view = measureForCompaction(ctx, session)
+
+    // The first refusal wins, and the text block precedes the image, so the
+    // text template is the reported reason for this node.
+    const count = view.measuredNodes.find(entry => entry.seq === userMessage.seq)?.count
+    expect(count).toMatchObject({ kind: 'unavailable' })
+    if (count?.kind !== 'unavailable') throw new Error('missing-header node must be unavailable')
+    expect(count.reason).toContain('canonical text: no durable provider/model request header')
+    // An image-only node reports the image template instead.
+    const imageCount = view.measuredNodes.find(entry => entry.seq === imageOnly.seq)?.count
+    expect(imageCount).toMatchObject({ kind: 'unavailable' })
+    if (imageCount?.kind !== 'unavailable') throw new Error('missing-header image node must be unavailable')
+    expect(imageCount.reason).toContain('canonical image: no durable provider/model request header')
+    // Both templates must remain exact; assert them directly so a reworded
+    // reason cannot pass unnoticed.
+    expect(view.countCanonicalText('probe')).toMatchObject({
       kind: 'unavailable',
+      reason: 'canonical text: no durable provider/model request header',
     })
     expect(view.currentSurface).toMatchObject({ kind: 'unavailable' })
   })

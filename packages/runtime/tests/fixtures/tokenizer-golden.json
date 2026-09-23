@@ -2,8 +2,8 @@
   "generator": "tokenizers 0.22.2 on Darwin",
   "revision": "1",
   "tokenizers": {
-    "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": "6821d6ad3681a4b137b066b76094fa82ebd0a380",
-    "deepseek-ai/DeepSeek-V4-Pro": "0e1a0e5e52aea73055f50fef6f2423db370265b6"
+    "deepseek-ai/DeepSeek-V4-Pro": "0e1a0e5e52aea73055f50fef6f2423db370265b6",
+    "deepseek-ai/DeepSeek-V4.1-Flash": "dba1be0a40aa45a94ad051997016db3960a90277"
   },
   "cases": [
     {
@@ -11,7 +11,7 @@
       "text": "The quick brown fox jumps over the lazy dog.",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 10,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 10
+        "deepseek-ai/DeepSeek-V4.1-Flash": 10
       }
     },
     {
@@ -19,7 +19,7 @@
       "text": "上下文压缩选择器在长任务中回收工具结果 token。",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 13,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 13
+        "deepseek-ai/DeepSeek-V4.1-Flash": 13
       }
     },
     {
@@ -27,7 +27,7 @@
       "text": "DeepSeek Harness 的 tool result 压缩,Fresh/Aggregate/History 三个阶段。",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 21,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 21
+        "deepseek-ai/DeepSeek-V4.1-Flash": 21
       }
     },
     {
@@ -35,7 +35,7 @@
       "text": "{\"status\":\"ok\",\"items\":[{\"id\":1,\"path\":\"/tmp/a.txt\"}],\"count\":1}",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 24,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 24
+        "deepseek-ai/DeepSeek-V4.1-Flash": 24
       }
     },
     {
@@ -43,7 +43,7 @@
       "text": "def solve(width: int, height: int) -> int:\n    return width * height // 2\n",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 22,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 22
+        "deepseek-ai/DeepSeek-V4.1-Flash": 22
       }
     },
     {
@@ -51,7 +51,7 @@
       "text": "$ pnpm run test\n> vitest run\n\n Test Files  12 passed (12)\n",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 19,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 19
+        "deepseek-ai/DeepSeek-V4.1-Flash": 19
       }
     },
     {
@@ -59,7 +59,7 @@
       "text": "line1\nline2\r\nline3\tline4  double  spaces",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 16,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 16
+        "deepseek-ai/DeepSeek-V4.1-Flash": 16
       }
     },
     {
@@ -67,7 +67,7 @@
       "text": "<｜begin▁of▁sentence｜><｜User｜>hello<｜Assistant｜><think>\n",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 6,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 6
+        "deepseek-ai/DeepSeek-V4.1-Flash": 6
       }
     },
     {
@@ -75,7 +75,7 @@
       "text": "before<｜deepseek_image｜>after",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 9,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 3
+        "deepseek-ai/DeepSeek-V4.1-Flash": 3
       }
     },
     {
@@ -83,7 +83,7 @@
       "text": "",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 0,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 0
+        "deepseek-ai/DeepSeek-V4.1-Flash": 0
       }
     },
     {
@@ -91,7 +91,7 @@
       "text": "a",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 1,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 1
+        "deepseek-ai/DeepSeek-V4.1-Flash": 1
       }
     },
     {
@@ -99,7 +99,7 @@
       "text": "compression 🧠✅ done",
       "counts": {
         "deepseek-ai/DeepSeek-V4-Pro": 7,
-        "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": 7
+        "deepseek-ai/DeepSeek-V4.1-Flash": 7
       }
     }
   ]

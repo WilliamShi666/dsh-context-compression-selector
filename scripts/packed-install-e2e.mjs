@@ -969,7 +969,7 @@ try {
   productionLicenses.argparse = argparse.license
 
   const packedTokenizerArtifacts = {}
-  for (const artifactDir of ['deepseek-v4', 'deepseek-v4-vision-exp']) {
+  for (const artifactDir of ['deepseek-v4', 'deepseek-v4.1-flash']) {
     const manifest = JSON.parse(await readFile(join(runtimeDir, 'assets', artifactDir, 'manifest.json'), 'utf8'))
     const tokenizerBytes = await readFile(join(runtimeDir, 'assets', artifactDir, 'tokenizer.json'))
     const tokenizerHash = createHash('sha256').update(tokenizerBytes).digest('hex')
@@ -1009,13 +1009,13 @@ try {
     'installed vision smoke reported the wrong model')
   assert(packedVisionSmoke.imageSession?.measurement?.kind === 'tokenizer-estimate',
     'installed vision smoke did not prove a tokenizer-estimate image surface')
-  assert(packedVisionSmoke.imageSession.measurement.tokens === 340
-    && packedVisionSmoke.imageSession.measurement.upperBoundTokens === 384,
+  assert(packedVisionSmoke.imageSession.measurement.tokens === 317
+    && packedVisionSmoke.imageSession.measurement.upperBoundTokens === 1024,
   'installed vision smoke reported the wrong 800x600 image estimate')
   assert(packedVisionSmoke.imageSession.measurement.estimatorId
-    === 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp/image-token-estimate'
+    === 'deepseek-ai/DeepSeek-V4.1-Flash/image-token-estimate'
     && packedVisionSmoke.imageSession.measurement.estimatorRevision
-      === '6821d6ad3681a4b137b066b76094fa82ebd0a380:v1',
+      === 'dba1be0a40aa45a94ad051997016db3960a90277:v1',
   'installed vision smoke reported the wrong image estimator identity')
   assert(packedVisionSmoke.imageSession.currentSurfaceKind === 'tokenizer-estimate'
     && packedVisionSmoke.imageSession.exactRewriteIneligible === true

@@ -20,7 +20,11 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 
-const MODEL = 'deepseek-v4-flash'
+// The Harness default model id. The smoke must drive the route users actually
+// get by default: `deepseek-flash` was previously unmapped and made compression
+// a no-op, and the legacy alias below would not have caught that. Mapping
+// coverage for every alias lives in the unit suite (`deepseek-v4-tokenizer.spec.ts`).
+const MODEL = 'deepseek-flash'
 const AUDIT_PREFIX = 'context-compression audit '
 const consumerRoot = await realpath(dirname(fileURLToPath(import.meta.url)))
 const consumerRequire = createRequire(import.meta.url)
@@ -395,11 +399,11 @@ try {
 
   // Packed vision-session gate: the installed runtime must actually resolve
   // the deepseek-v4-flash-vision-exp route, count text exactly with the
-  // separately bundled vision tokenizer, estimate image surfaces, and keep
-  // image-bearing results outside exact rewrite proofs.
+  // V4.1-Flash tokenizer, estimate image surfaces, and keep image-bearing
+  // results outside exact rewrite proofs.
   const VISION_MODEL = 'deepseek-v4-flash-vision-exp'
-  const VISION_TOKENIZER_REPOSITORY = 'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp'
-  const VISION_TOKENIZER_REVISION = '6821d6ad3681a4b137b066b76094fa82ebd0a380'
+  const VISION_TOKENIZER_REPOSITORY = 'deepseek-ai/DeepSeek-V4.1-Flash'
+  const VISION_TOKENIZER_REVISION = 'dba1be0a40aa45a94ad051997016db3960a90277'
   const imageBlock = (width, height) => ({
     type: 'image',
     attachment: {
@@ -536,10 +540,10 @@ try {
       .find(node => node.seq === estimatedUserImage.seq)?.count
     assert(estimatedImageCount?.kind === 'tokenizer-estimate',
       `packed vision image surface is ${String(estimatedImageCount?.kind)}, expected tokenizer-estimate`)
-    assert(estimatedImageCount.tokens === 340,
-      `packed vision 800x600 estimate is ${String(estimatedImageCount.tokens)}, expected 340`)
-    assert(estimatedImageCount.upperBoundTokens === 384,
-      `packed vision image upper bound is ${String(estimatedImageCount.upperBoundTokens)}, expected 384`)
+    assert(estimatedImageCount.tokens === 317,
+      `packed vision 800x600 estimate is ${String(estimatedImageCount.tokens)}, expected 317`)
+    assert(estimatedImageCount.upperBoundTokens === 1024,
+      `packed vision image upper bound is ${String(estimatedImageCount.upperBoundTokens)}, expected 1024`)
     assert(estimatedImageCount.estimatorId === `${VISION_TOKENIZER_REPOSITORY}/image-token-estimate`,
       `packed vision image estimator id is ${String(estimatedImageCount.estimatorId)}`)
     assert(estimatedImageCount.estimatorRevision === `${VISION_TOKENIZER_REVISION}:v1`,

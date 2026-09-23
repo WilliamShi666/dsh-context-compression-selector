@@ -20,8 +20,8 @@ import platform
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 ASSETS = {
     "deepseek-ai/DeepSeek-V4-Pro": REPO_ROOT / "packages/runtime/assets/deepseek-v4",
-    "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": REPO_ROOT
-    / "packages/runtime/assets/deepseek-v4-vision-exp",
+    "deepseek-ai/DeepSeek-V4.1-Flash": REPO_ROOT
+    / "packages/runtime/assets/deepseek-v4.1-flash",
 }
 OUTPUT = REPO_ROOT / "packages/runtime/tests/fixtures/tokenizer-golden.json"
 
