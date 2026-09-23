@@ -5,11 +5,13 @@
 [中文说明](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!NOTE]
-> **What's new in 0.1.0:**
+> **What's new in 0.1.1:**
 >
-> - Adds DeepSeek-V4.1-Flash support: the `deepseek-flash` default route now resolves an exact tokenizer, and the vision image-token arithmetic is re-ported to the V4.1 image processor.
-> - Lets users choose the trigger threshold for model-driven Auto Compact in the selector settings.
-> - Links each profile's context-compression strategy and related watermarks to that Auto Compact threshold.
+> - **DeepSeek-V4.1-Flash is now supported on the Harness default route.** `deepseek-flash` resolves an exact bundled tokenizer (`deepseek-ai/DeepSeek-V4.1-Flash`) instead of failing closed, so exact-gated compression is no longer a no-op on the default model. `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are served by the same V4.1-Flash artifact.
+> - Vision image-token arithmetic is re-ported to the official V4.1 image processor: the per-image cap moves 384 → 1024, the minimum-pixel floor 147456 → 295936, and the aspect clamp is gone.
+> - `deepseek-flash` gains official pricing rows, and the two retired aliases are repriced at the Flash price. `deepseek-v4-pro` is unchanged.
+>
+> See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 > [!IMPORTANT]
 > This project currently supports **DeepSeek models only**. Its lossless measurement and lossy tool-result compression depend on the bundled official DeepSeek tokenizers. The exact supported model IDs in this release are `deepseek-flash`, `deepseek-v4-flash`, `deepseek-v4-pro`, and `deepseek-v4-flash-vision-exp`. Other DeepSeek Harness models, including non-DeepSeek providers, fail open and retain their original tool results.
@@ -136,7 +138,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development expectations, [SECURITY.m
 
 ## Install
 
-The newest package release is `0.1.0` on the `latest` channel. Install the single Bundle entry package into a Harness profile:
+The newest package release is `0.1.1` on the `latest` channel. Install the single Bundle entry package into a Harness profile:
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@latest

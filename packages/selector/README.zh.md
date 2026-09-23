@@ -2,7 +2,7 @@
 
 这是可直接安装的非官方社区 DeepSeek Harness 上下文压缩选择器 Product Bundle。
 
-**0.1.0 更新：**已加入 DeepSeek V4 Flash 视觉模型的官方 tokenizer；用户可选择模型驱动 Auto Compact 的触发阈值；标准 Profile 的水位与压缩参数会随该选择联动。
+**0.1.1 更新：**现已支持 DeepSeek-V4.1-Flash，并覆盖 Harness 默认路由——`deepseek-flash` 可解析出随包提供的精确 tokenizer 而不再空转，因此默认模型上的精确门槛压缩不再失效。视觉图片 token 算术已按官方 V4.1 image processor 重移植，`deepseek-flash` 也补齐了官方价格行。
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@latest

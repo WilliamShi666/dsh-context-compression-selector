@@ -5,11 +5,13 @@
 [English README](README.md) · [English courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!NOTE]
-> **0.1.0 更新内容：**
+> **0.1.1 更新内容：**
 >
-> - 新增 DeepSeek-V4.1-Flash 支持：默认路由 `deepseek-flash` 现在可解析出精确 tokenizer，视觉图片 token 算术已按 V4.1 image processor 重移植。
-> - 用户可在选择器设置中自定义模型驱动上下文压缩（Auto Compact）的触发阈值。
-> - 各 Profile 的上下文压缩策略及相关水位会随该 Auto Compact 阈值联动调整。
+> - **现已支持 DeepSeek-V4.1-Flash，并覆盖 Harness 默认路由。** 默认路由 `deepseek-flash` 现在可解析出随包提供的精确 tokenizer（`deepseek-ai/DeepSeek-V4.1-Flash`），不再安全降级为空转，因此默认模型上的精确门槛压缩不再失效。`deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 由同一份 V4.1-Flash 资产提供服务。
+> - 视觉图片 token 算术已按官方 V4.1 image processor 重移植：每张图片上限 384 → 1024、最小像素 147456 → 295936，且取消了宽高比裁剪。
+> - `deepseek-flash` 补齐官方价格行，两个已退役别名改按 Flash 价格计费；`deepseek-v4-pro` 保持不变。
+>
+> 完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 > [!IMPORTANT]
 > 本项目目前**只支持 DeepSeek 模型**。无损 token 测量与有损工具结果压缩依赖随包提供的 DeepSeek 官方 tokenizer。本版本精确支持的模型 id 为 `deepseek-flash`、`deepseek-v4-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash-vision-exp`。其他 DeepSeek Harness 模型（包括非 DeepSeek 提供商模型）会安全降级，保留原始工具结果。
@@ -136,7 +138,7 @@ pnpm run verify:release
 
 ## 安装
 
-最新包版本是 `latest` 通道上的 `0.1.0`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
+最新包版本是 `latest` 通道上的 `0.1.1`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@latest
