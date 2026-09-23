@@ -97,6 +97,32 @@ const assert = (condition, message) => {
   if (!condition) throw new Error(`packed Host smoke: ${message}`)
 }
 
+/**
+ * Ceiling on one upstream registry request, headers and body together.
+ *
+ * A hung fetch is indistinguishable from a slow one until it is far too late,
+ * and every install step below waits on this proxy, so an unbounded request
+ * stalls the whole gate rather than degrading one response.
+ */
+const UPSTREAM_REGISTRY_TIMEOUT_MS = 120_000
+
+/**
+ * Pipe a stream into a response, confining any stream error to that one response.
+ *
+ * `pipe()` does not forward errors, and an 'error' emitted on a piped Readable
+ * with no listener is an uncaught exception that aborts the whole E2E process —
+ * after which every remaining request fails with UND_ERR_SOCKET and the gate
+ * reports a misleading install failure. Upstream registry bodies time out
+ * mid-transfer routinely on a flaky link, so this is the common path rather
+ * than a corner case; destroying the response makes the client see an aborted
+ * body and retry, instead of killing the run.
+ */
+const pipeToResponse = (source, response) => {
+  source.on('error', () => response.destroy())
+  response.on('error', () => source.destroy())
+  source.pipe(response)
+}
+
 async function scanPublishedTree(packageRoot) {
   const pending = [packageRoot]
   const violations = []
@@ -829,7 +855,7 @@ try {
           const details = await stat(descriptor.tarball)
           response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': details.size })
           if (request.method === 'HEAD') response.end()
-          else createReadStream(descriptor.tarball).pipe(response)
+          else pipeToResponse(createReadStream(descriptor.tarball), response)
           return
         }
       }
@@ -838,7 +864,7 @@ try {
           const details = await stat(previous.tarball)
           response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': details.size })
           if (request.method === 'HEAD') response.end()
-          else createReadStream(previous.tarball).pipe(response)
+          else pipeToResponse(createReadStream(previous.tarball), response)
           return
         }
       }
@@ -850,6 +876,7 @@ try {
       const upstream = await fetch(`https://registry.npmjs.org${requestUrl.pathname}${requestUrl.search}`, {
         method: request.method,
         headers: { accept: request.headers.accept ?? '*/*' },
+        signal: AbortSignal.timeout(UPSTREAM_REGISTRY_TIMEOUT_MS),
       })
       const headers = {}
       for (const name of ['content-type', 'content-length', 'cache-control', 'etag', 'last-modified']) {
@@ -858,10 +885,17 @@ try {
       }
       response.writeHead(upstream.status, headers)
       if (request.method === 'HEAD' || upstream.body === null) response.end()
-      else Readable.fromWeb(upstream.body).pipe(response)
+      else pipeToResponse(Readable.fromWeb(upstream.body), response)
     } catch (error) {
-      response.writeHead(502, { 'content-type': 'text/plain' })
-      response.end(error instanceof Error ? error.message : String(error))
+      // Headers already went out on an upstream body failure; the only correct
+      // move is to abort the body. Re-entering writeHead here would throw
+      // ERR_HTTP_HEADERS_SENT out of the async handler, which is an unhandled
+      // rejection — the same process-killing failure this guard exists to stop.
+      if (response.headersSent) response.destroy()
+      else {
+        response.writeHead(502, { 'content-type': 'text/plain' })
+        response.end(error instanceof Error ? error.message : String(error))
+      }
     }
   })
   await new Promise((resolve, reject) => {
