@@ -5,6 +5,15 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 
+/**
+ * The single dsh peer range both packages declare. `^0.1.1-rc.2` covers the
+ * 0.1 line, `^0.2.0-rc.1` the 0.2 line including its prereleases. A plain
+ * `>=0.1.1-rc.2 <0.3.0` would be wrong: under npm's default prerelease rule
+ * it rejects 0.2.0-rc.N, and the host gate (includePrerelease) would accept
+ * 0.3.0-rc.1, which is untested.
+ */
+const DUAL_TARGET_DSH_PEER = '^0.1.1-rc.2 || ^0.2.0-rc.1'
+
 const fail = (message) => {
   throw new Error(`release verification: ${message}`)
 }
@@ -99,11 +108,20 @@ for (const [name, manifest] of [
   if (manifest.publishConfig?.access !== 'public') fail(`${name} publish access is not public`)
   if (manifest.publishConfig?.tag !== 'latest') fail(`${name} publish tag is not latest`)
 }
+for (const packageRoot of [join(root, 'packages/runtime'), join(root, 'packages/selector')]) {
+  const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
+  for (const [peer, range] of Object.entries(manifest.peerDependencies ?? {})) {
+    if (!peer.startsWith('@deepseek-ai/dsh-')) continue
+    if (range !== DUAL_TARGET_DSH_PEER) {
+      fail(`${relative(root, packageRoot)} peer ${peer} range ${JSON.stringify(range)} is not the dual-target dsh range`)
+    }
+  }
+}
 for (const peer of [
   '@deepseek-ai/dsh-command-compact',
   '@deepseek-ai/dsh-compaction-basic',
 ]) {
-  if (selectorPackage.peerDependencies?.[peer] !== '>=0.1.1-rc.2 <0.2.0') {
+  if (selectorPackage.peerDependencies?.[peer] !== DUAL_TARGET_DSH_PEER) {
     fail(`selector peer ${peer} is missing or outside the verified range`)
   }
 }

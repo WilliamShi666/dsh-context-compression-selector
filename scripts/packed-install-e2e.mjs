@@ -968,7 +968,7 @@ try {
     throw new Error('packed package is not guarded by publishConfig.tag=latest')
   }
   for (const peer of ['@deepseek-ai/dsh-command-compact', '@deepseek-ai/dsh-compaction-basic']) {
-    if (selector.peerDependencies?.[peer] !== '>=0.1.1-rc.2 <0.2.0') {
+    if (selector.peerDependencies?.[peer] !== '^0.1.1-rc.2 || ^0.2.0-rc.1') {
       throw new Error(`packed selector has an invalid ${peer} peer range`)
     }
   }
