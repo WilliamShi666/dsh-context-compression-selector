@@ -5,8 +5,9 @@
 [English README](README.md) · [English courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!NOTE]
-> **0.2.0 更新内容：**
+> **0.2.1 更新内容：**
 >
+> - **修复了 0.2.0 上设置面板空白的问题。** 0.2.0 的设置页以 React error #185（`Maximum update depth exceeded`）中断失败——导航入口出现，但面板不渲染任何内容。原因是 0.2.0 适配器在每次读取快照时都新组装一个设置文档，而 `useSyncExternalStore` 按引用比较相邻快照，因此永远无法收敛。现在该文档按表单自身快照做了记忆化。**如果你装的是 0.2.0，请升级到 0.2.1。**
 > - **同一份构建现在可同时运行在 DeepSeek Harness 0.2.x 与 0.1.x 上。** 所有 `@deepseek-ai/dsh-*` peer 范围放宽为 `^0.1.1-rc.2 || ^0.2.0-rc.1`，选择器按能力而非按版本挑选设置界面，因此同一个已发布产物可挂载到任一代 Harness。不修改 Harness 核心代码，`dsh web` 启动命令也无需改动。
 > - **0.2.0 上 web 启动不再中断。** 选择器此前把一个仅 0.1.x 提供的设置服务声明为静态依赖，0.2.0 不提供该服务，导致插件入口一直处于 pending 并中断整个页面。现在每个设置界面各自在自己的子 fiber 中获取。
 > - **0.2.0 支持实时设置编辑**，经由入口的 volatile 配置字段。带版本的 Custom 策略在 0.2.0 上不可编辑（该代设置表单只服务于这些字段），因此界面在 0.2.0 上不再显示 Custom 编辑器，而不是提供一个会被静默丢弃的编辑入口。显式选择 Custom 仍然可用。
@@ -151,7 +152,7 @@ pnpm run verify:release
 
 ## 安装
 
-最新包版本是 `latest` 通道上的 `0.2.0`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
+最新包版本是 `latest` 通道上的 `0.2.1`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@latest
