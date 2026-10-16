@@ -34,7 +34,12 @@ describe('built Harness client artifact', () => {
     }) as { apply?: unknown, inject?: unknown }
 
     expect(exported.apply).toBeTypeOf('function')
-    expect(exported.inject).toEqual(['slots', 'locale', 'settingsScope'])
+    // Both settings surfaces are acquired through `ctx.inject` sub-fibers
+    // rather than this static array: neither `settingsScope` (0.1.x) nor
+    // `configForms` (0.2.0) exists on the other generation, and a static
+    // dependency on a missing service leaves the entry fiber pending, which
+    // aborts the whole web boot.
+    expect(exported.inject).toEqual(['slots', 'locale'])
     const style = document.querySelector<HTMLStyleElement>(
       'style[data-plugin-css="dsh-context-compression-selector/CompressionProfileSelector.module.css"]',
     )

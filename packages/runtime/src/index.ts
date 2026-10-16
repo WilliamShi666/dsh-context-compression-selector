@@ -87,6 +87,7 @@ export {
   isCompressionProfile,
   isValidAutoCompactThresholdPercent,
   PRUNE_MARKER,
+  readLiveConfigField,
   resolveConfig,
   resolvePolicy,
 } from './config.ts'
@@ -185,6 +186,27 @@ type HistoryPlanOutcome =
 const RICH_BLOCK_PRESSURE_COST = 256
 /** Routed-context utilization required before capacity-pressure History may age sent history. */
 const CAPACITY_PRESSURE_RATIO = 0.7
+
+/**
+ * Read the persisted compression document from whichever settings surface the
+ * running Harness generation provides.
+ *
+ * Harness 0.1.x stores the whole document under this plugin's own namespace and
+ * exposes `settings.get(namespace)`. Harness 0.2.0 replaced that namespace
+ * surface with per-entry configuration forms: the service registered as
+ * `settings` exposes no `get` at all, so calling it there throws a TypeError
+ * rather than merely failing to find a document. On that generation the
+ * deployment config is the only settings surface the runtime can read, and the
+ * Host has already merged the live preference into it, so returning undefined
+ * here is the correct answer.
+ * @param ctx - the runtime context carrying the Host settings service.
+ * @returns the stored document, or undefined when this generation has none.
+ */
+function readStoredSettingsDocument(ctx: Context): unknown {
+  const settings = ctx.get('settings') as { get?: (namespace: never) => unknown } | undefined
+  if (typeof settings?.get !== 'function') return undefined
+  return settings.get(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE as never)
+}
 
 /** Mixed deterministic selector behind the existing `ctx.toolResultPruner` seam. */
 export class ToolResultPruner extends Service {
@@ -437,7 +459,7 @@ export class ToolResultPruner extends Service {
     if (frozen !== undefined) return frozen
     // Harness 0.1.1 brands namespace values through a helper while 0.1.2
     // validates the same public literal at its SettingsProvider boundary.
-    const settings = this.ctx.get('settings')?.get(CONTEXT_COMPRESSION_SETTINGS_NAMESPACE as never)
+    const settings = readStoredSettingsDocument(this.ctx)
     let resolved: ContextCompressionSettings
     let settingsSource: 'host-settings' | 'plugin-config-fallback' = settings === undefined
       ? 'plugin-config-fallback'

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ClientContext, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type { SettingsSnapshot } from '../src/client/settings-face.ts'
 import {
   DEFAULT_CUSTOM_COMPRESSION_POLICY,
   isCustomCompressionPolicy,
@@ -11,7 +12,12 @@ import type {
   ContextCompressionSettings,
 } from '../src/client/CompressionProfileSelector.tsx'
 
+// The component resolves the chevron by reading the package namespace, since
+// neither generation's export name compiles against the other's types. Mocking
+// only the 0.2.0 name would leave the 0.1.x build's lookup empty, so both are
+// provided here as a real installation provides exactly one.
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
+  IconChevronDownOutlineRegular: () => null,
   IconChevronDownOutline14: () => null,
   Menu: () => null,
 }))
@@ -87,7 +93,7 @@ describe('context compression browser contract', () => {
       custom: structuredClone(CUSTOM),
       autoCompact: { thresholdPercent: 80 },
     }
-    const snapshot = (): SettingsScopeSnapshot<ContextCompressionSettings> => ({
+    const snapshot = (): SettingsSnapshot<ContextCompressionSettings> => ({
       status: 'ready',
       value,
       base: undefined,
@@ -140,7 +146,13 @@ describe('context compression browser contract', () => {
       }),
     }
     let injected: (() => CompressionSelectorInjected) | undefined
-    const ctx = {
+    // `ctx.inject(names, install)` runs `install` with a child context once
+    // every named service is present, and leaves the caller's own fiber
+    // running when one never arrives. This fixture provides the 0.1.x
+    // `settingsScope` surface only, so the 0.2.0 `configForms` sub-fiber stays
+    // pending exactly as it does on a real 0.1.x Host, and only the
+    // `settingsScope` install reaches `mountSection`.
+    const services: Record<string, unknown> = {
       effect: (install: () => unknown) => { install() },
       locale: { register: vi.fn(() => () => {}) },
       settingsScope: { bind: vi.fn(() => scope) },
@@ -151,7 +163,14 @@ describe('context compression browser contract', () => {
           return () => {}
         },
       },
-    } as unknown as ClientContext
+    }
+    const ctx = {
+      ...services,
+      inject: (names: readonly string[], install: (sub: Record<string, unknown>) => unknown) => {
+        if (names.every(name => name in services)) install(services)
+        return undefined
+      },
+    } as unknown as Context
 
     apply(ctx)
     const actions = injected?.()

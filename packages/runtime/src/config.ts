@@ -45,6 +45,41 @@ export function isValidAutoCompactThresholdPercent(value: unknown): value is num
     && value <= AUTO_COMPACT_THRESHOLD_LIMITS.max
 }
 
+/**
+ * Live-Config reference protocol, resolved through the global symbol registry
+ * rather than imported: a Cordis plugin must not take a dependency on the
+ * Host's `cosmokit` copy, and `Symbol.for` is exactly how that copy makes the
+ * marker visible across separate ESM/CJS module instances.
+ */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+
+/**
+ * Read one Config field as a plain value across both Harness generations.
+ *
+ * Harness 0.2.0 exposes a Live-Config field declared volatile as a reference
+ * whose cell is updated in place when the settings page writes, so the plugin
+ * keeps one object for its whole life and reads the current value through
+ * `get()`. Harness 0.1.x, and every field not declared volatile, delivers the
+ * plain value instead. Both shapes reduce to the same read.
+ *
+ * Detection is the reference protocol itself — the write marker on the global
+ * symbol registry — not the mere presence of a `get` method, so an ordinary
+ * custom object that happens to expose `get` is passed through untouched.
+ *
+ * The parameter is typed `T | undefined` rather than `T | { get(): T }`: a
+ * reference is indistinguishable from `T` at the type level (a plain object
+ * field is a legal `T`), so naming it in the signature would only make the
+ * non-reference branch unprovable. The runtime check above is the real
+ * discriminator, and the assertions below restate what it established.
+ * @param value - the raw field as it reached the plugin's config.
+ * @returns the plain field value, or undefined when unset.
+ */
+export function readLiveConfigField<T>(value: T | undefined): T | undefined {
+  if (value === null || typeof value !== 'object' || !(VOLATILE_WRITE in value)) return value
+  const reference = value as unknown as { get?: unknown }
+  return typeof reference.get === 'function' ? reference.get() as T : value
+}
+
 const AUTO_COMPACT_DEFAULT: AutoCompactSettings = deepFreeze({ thresholdPercent: AUTO_COMPACT_THRESHOLD_LIMITS.default })
 
 /** Accept JSON-object records while rejecting class instances and exotic prototypes. */

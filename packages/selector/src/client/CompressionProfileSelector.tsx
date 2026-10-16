@@ -1,8 +1,9 @@
-import { useEffect, useId, useState } from 'react'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
+import { useEffect, useId, useState, type ComponentType } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ContextCompressionLocaleKey } from './locales.ts'
+import { currentAgentPreset } from './session-preset.ts'
+import type { SettingsFace } from './settings-face.ts'
 import css from './CompressionProfileSelector.module.css'
 import {
   AUTO_COMPACT_THRESHOLD_LIMITS,
@@ -20,8 +21,41 @@ import {
 export { COMPRESSION_PROFILES, isCustomCompressionPolicy }
 export type { CompressionProfile, CustomCompressionPolicy, ContextCompressionSettings }
 
+/** Props the chevron artwork accepts; identical on both Harness generations. */
+type ChevronIconProps = { className?: string | undefined }
+
+/**
+ * The chevron marking the selector as a disclosure control, resolved across
+ * Harness generations. 0.1.x exports `IconChevronDownOutline14`; 0.2.0 renamed
+ * the same artwork to `IconChevronDownOutlineRegular`, dropping the size suffix
+ * from the name. `IconProps` is identical on both, so one slot serves either
+ * build — this package is a client external, so whichever generation is
+ * installed supplies its own export at runtime.
+ *
+ * The lookup is a namespace read rather than a static import because neither
+ * name exists on the other generation: a named import of either one would fail
+ * to compile against the other's types. A generation that renames the artwork
+ * again degrades to a missing glyph rather than a failed component.
+ */
+const ChevronDownIcon: ComponentType<ChevronIconProps> = (() => {
+  const exported = primitives as unknown as Record<string, ComponentType<ChevronIconProps> | undefined>
+  return exported.IconChevronDownOutlineRegular
+    ?? exported.IconChevronDownOutline14
+    ?? (() => null)
+})()
+
+/** Disclosure menu, present under the same name on both generations. */
+const { Menu } = primitives
+
 export interface CompressionSelectorInjected {
-  hooks: { compression: SettingsScope<ContextCompressionSettings> }
+  hooks: { compression: SettingsFace<ContextCompressionSettings> }
+  /**
+   * Whether this Harness generation can persist the versioned Custom policy.
+   * False on Harness 0.2.0, whose per-entry form serves only the entry's
+   * Host-declared volatile fields, so no surface may offer to edit or select
+   * Custom there.
+   */
+  customEditable: boolean
   select: (profile: CompressionProfile) => Promise<void>
   saveCustom: (custom: CustomCompressionPolicy) => Promise<void>
   resetCustom: () => Promise<void>
@@ -39,14 +73,12 @@ export function ContextCompressionSettingsSection(props: CompressionProfileSelec
 }
 
 function SettingsCompressionProfileControls({
-  useCompression, useSessions, select, saveCustom, resetCustom, saveAutoCompact, t,
+  useCompression, useSessions, customEditable, select, saveCustom, resetCustom, saveAutoCompact, t,
 }: CompressionProfileSelectorProps) {
   const state = useCompression(snapshot => snapshot)
-  const currentPreset = useSessions((sessions) => {
-    const current = sessions.current
-    return current === undefined ? undefined : sessions.byId[current]?.agentPreset
-  })
+  const currentPreset = useSessions(currentAgentPreset)
   const selectorAvailable = currentPreset !== 'minimal'
+  const customAvailable = customEditable && selectorAvailable
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [draft, setDraft] = useState<CustomCompressionPolicyV3 | null>(null)
@@ -111,7 +143,7 @@ function SettingsCompressionProfileControls({
         t={t}
       />
       <div className={css.pricing}>{t('pricing.disclosure')}</div>
-      {current !== 'custom' || draft === null || !selectorAvailable ? null : (
+      {current !== 'custom' || draft === null || !customAvailable ? null : (
         <CustomPolicyEditor value={draft} disabled={busy || !state.writable} setValue={setDraft}
           save={() => saveCustom(structuredClone(draft))} reset={resetCustom} settle={settle} t={t} />
       )}
@@ -123,20 +155,22 @@ function SettingsCompressionProfileControls({
 export function CompressionProfileSelector({
   ...props
 }: CompressionProfileSelectorProps) {
+  // The compact sidebar never hosts the Custom editor: a full parameter form
+  // has no room there, so it only points at the Settings page that does. This
+  // is the surface axis, orthogonal to `customEditable`, which is the
+  // generation axis deciding whether ANY surface may offer to edit the policy.
   return <CompressionProfileControls {...props} showCustomEditor={false} />
 }
 
 function CompressionProfileControls({
-  useCompression, useSessions, select, saveCustom, resetCustom, t, showCustomEditor,
+  useCompression, useSessions, customEditable, select, saveCustom, resetCustom, t, showCustomEditor,
 }: CompressionProfileSelectorProps & { showCustomEditor: boolean }) {
   const state = useCompression(snapshot => snapshot)
-  const currentPreset = useSessions((sessions) => {
-    const current = sessions.current
-    return current === undefined ? undefined : sessions.byId[current]?.agentPreset
-  })
+  const currentPreset = useSessions(currentAgentPreset)
   // A profile is Host-global. A cold Session may not have reported a live
   // capability yet, so only Minimal blocks initial configuration.
   const contextCompressionAvailable = currentPreset !== 'minimal'
+  const customAvailable = customEditable && contextCompressionAvailable
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -198,7 +232,7 @@ function CompressionProfileControls({
               <span className={css.label}>{t('label')}</span>
               <span className={css.value}>{label}</span>
             </span>
-            <IconChevronDownOutline14 className={css.chevron} />
+            <ChevronDownIcon className={css.chevron} />
           </button>
         )}
       />
@@ -211,13 +245,13 @@ function CompressionProfileControls({
       <div className={css.settingsHint}>
         {t('autoCompact.summaryHint').replace('{percent}', String(state.value?.autoCompact?.thresholdPercent ?? AUTO_COMPACT_THRESHOLD_LIMITS.default))}
       </div>
-      {current !== 'custom' || showCustomEditor ? null : (
+      {current !== 'custom' || showCustomEditor || !customAvailable ? null : (
         <div className={css.settingsHint}>{t('custom.settingsHint')}</div>
       )}
-      {current !== 'custom' || draft === null || !showCustomEditor ? null : (
+      {current !== 'custom' || !showCustomEditor || draft === null || !customAvailable ? null : (
         <CustomPolicyEditor
           value={draft}
-          disabled={busy || !state.writable || !contextCompressionAvailable}
+          disabled={busy || !state.writable || !customAvailable}
           setValue={setDraft}
           save={() => saveCustom(structuredClone(draft))}
           reset={resetCustom}

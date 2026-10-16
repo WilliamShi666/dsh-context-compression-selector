@@ -11,19 +11,10 @@ import {
   type CompressionProfileSelectorProps,
   type ContextCompressionSettings,
 } from '../src/client/CompressionProfileSelector.tsx'
+import type { SettingsSnapshot } from '../src/client/settings-face.ts'
 import { en, zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
-
-interface SettingsScopeSnapshot<T> {
-  status: 'loading' | 'ready' | 'unavailable'
-  value: T | undefined
-  base: T | undefined
-  user: T | undefined
-  revision: number | undefined
-  writable: boolean
-  mode: 'host' | 'memory'
-}
 
 interface SnapshotStore<T> {
   readonly getSnapshot: () => T
@@ -139,7 +130,7 @@ function renderReady(
     settingsSection?: boolean
   } = {},
 ) {
-  const state = createSnapshotStore<SettingsScopeSnapshot<ContextCompressionSettings>>({
+  const state = createSnapshotStore<SettingsSnapshot<ContextCompressionSettings>>({
     status: 'ready',
     value: options.value ?? {
       profile: 'native',
@@ -171,6 +162,10 @@ function renderReady(
   render(<Component {...({
     useCompression: bindSnapshotSelector(state),
     useSessions: bindSnapshotSelector(sessions),
+    // The 0.1.x `settingsScope` surface persists the whole document, so the
+    // versioned Custom policy is editable there — which is what these fixtures
+    // exercise. Harness 0.2.0 reports false and no surface offers Custom.
+    customEditable: true,
     select,
     saveCustom: options.saveCustom ?? (() => Promise.resolve()),
     resetCustom: options.resetCustom ?? (() => Promise.resolve()),
@@ -200,7 +195,7 @@ describe('context compression profiles', () => {
   })
 
   it('renders no selector when Host settings are unavailable', () => {
-    const state = createSnapshotStore<SettingsScopeSnapshot<ContextCompressionSettings>>({
+    const state = createSnapshotStore<SettingsSnapshot<ContextCompressionSettings>>({
       status: 'unavailable',
       value: undefined,
       base: undefined,
@@ -216,6 +211,7 @@ describe('context compression profiles', () => {
     render(<CompressionProfileSelector {...({
       useCompression: bindSnapshotSelector(state),
       useSessions: bindSnapshotSelector(sessions),
+      customEditable: true,
       select: vi.fn(() => Promise.resolve()),
       t: (key: string) => COPY[key] ?? key,
     } as unknown as CompressionProfileSelectorProps)} />)

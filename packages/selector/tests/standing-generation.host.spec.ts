@@ -118,16 +118,29 @@ async function sameLengthModule(label: string): Promise<string> {
   return file
 }
 
-/** Reproduce the production content identity without replacing it in the store. */
+/**
+ * Reproduce the production content identity without replacing it in the store.
+ *
+ * Mirrors `PresetOverlayStore`'s serialization exactly, including the `profile`
+ * member it folds in for Harness 0.2.0. This fixture decorates without a
+ * `profile` option, so the member is `null` here just as it is in production
+ * when no selection is carried; omitting the member would hash a different
+ * string than the store and the generated file names would not be found.
+ */
 function overlayIdentity(
   source: string,
   modules: CompressionModulePaths,
   thresholdPercent: number,
+  profile?: string,
 ): string {
   return createHash('sha256')
     .update('standard').update('\0')
     .update(source).update('\0')
-    .update(JSON.stringify({ modules, autoCompactThresholdPercent: thresholdPercent }))
+    .update(JSON.stringify({
+      modules,
+      autoCompactThresholdPercent: thresholdPercent,
+      profile: profile ?? null,
+    }))
     .digest('hex')
     .slice(0, 24)
 }

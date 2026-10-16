@@ -10,19 +10,10 @@ import {
   type CompressionProfileSelectorProps,
   type ContextCompressionSettings,
 } from '../src/client/CompressionProfileSelector.tsx'
+import type { SettingsSnapshot } from '../src/client/settings-face.ts'
 import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
-
-interface SettingsScopeSnapshot<T> {
-  status: 'loading' | 'ready' | 'unavailable'
-  value: T | undefined
-  base: T | undefined
-  user: T | undefined
-  revision: number | undefined
-  writable: boolean
-  mode: 'host' | 'memory'
-}
 
 interface SnapshotStore<T> {
   readonly getSnapshot: () => T
@@ -84,7 +75,7 @@ interface MountOptions {
 }
 
 function mountAutoCompact(options: MountOptions = {}) {
-  const state = createSnapshotStore<SettingsScopeSnapshot<ContextCompressionSettings>>({
+  const state = createSnapshotStore<SettingsSnapshot<ContextCompressionSettings>>({
     status: options.status ?? 'ready',
     value: options.value ?? {
       profile: 'balanced',
@@ -111,6 +102,9 @@ function mountAutoCompact(options: MountOptions = {}) {
   render(<Component {...({
     useCompression: bindSnapshotSelector(state),
     useSessions: bindSnapshotSelector(sessions),
+    // This fixture stands in for the 0.1.x `settingsScope` surface, where the
+    // whole document is persisted and the Custom policy stays editable.
+    customEditable: true,
     select: vi.fn(() => Promise.resolve()),
     saveCustom: vi.fn(() => Promise.resolve()),
     resetCustom: vi.fn(() => Promise.resolve()),

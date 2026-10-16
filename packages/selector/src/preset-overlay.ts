@@ -47,6 +47,20 @@ export interface PresetOverlayOptions {
    * thresholds. Returning `undefined` keeps both defaults untouched.
    */
   readonly autoCompactThresholdPercent?: () => number | undefined
+  /**
+   * Reads the selected compression profile to freeze into newly generated
+   * compositions.
+   *
+   * Harness 0.1.x keeps the profile inside the shared `context-compression`
+   * settings document, which the runtime reads live under its own namespace, so
+   * a generated composition never had to state it. Harness 0.2.0 removed that
+   * shared document: every write lands on the single entry that owns the
+   * volatile field, and the runtime runs as its OWN entry inside the generated
+   * composition, so nothing carries the selection across unless the generator
+   * writes it into the pruner's config. Returning `undefined` leaves the
+   * runtime schema default in force, which is the 0.1.x behavior.
+   */
+  readonly profile?: () => string | undefined
   /** Test seam for locating the owner-only generated directory. */
   readonly tempParent?: string
   /**
@@ -186,9 +200,10 @@ class PresetOverlayStore {
       // dump would serialize it as `.nan`; refuse instead.
       throw new Error(`context-compression selector: Auto Compact threshold percent must be finite, got ${String(thresholdPercent)}`)
     }
+    const profile = this.options.profile?.()
     const patched = applyEntryPatches(
       stripCompressionRows(rows),
-      [{ insert: canonicalCompressionRows(this.options.modules, thresholdPercent) }],
+      [{ insert: canonicalCompressionRows(this.options.modules, thresholdPercent, profile) }],
       (message: string, ...args: unknown[]) => {
         throw new Error(renderPatchWarning(message, args))
       },
@@ -199,12 +214,17 @@ class PresetOverlayStore {
       lineWidth: -1,
       sortKeys: false,
     })
-    // The percent joins the content identity by value, not by rendered
-    // length, so an equal-length change (70 -> 80) still produces a new file.
+    // The percent and the profile join the content identity by value, not by
+    // rendered length, so an equal-length change (70 -> 80, or one profile id
+    // replaced by another) still produces a new file.
     const identity = createHash('sha256')
       .update(preset.id).update('\0')
       .update(source).update('\0')
-      .update(JSON.stringify({ modules: this.options.modules, autoCompactThresholdPercent: thresholdPercent ?? null }))
+      .update(JSON.stringify({
+        modules: this.options.modules,
+        autoCompactThresholdPercent: thresholdPercent ?? null,
+        profile: profile ?? null,
+      }))
       .digest('hex')
       .slice(0, 24)
     const root = await this.root()
@@ -315,10 +335,16 @@ function stripCompressionRows(rows: EntryOptions[]): EntryOptions[] {
  * the compaction-basic `thresholdRatio` (beside the pinned first-release
  * `retainRatio`) and the runtime deployment config, so plugin History and
  * native Auto Compact share one watermark for this whole generation.
+ *
+ * The profile is carried for the same reason the threshold is: on Harness
+ * 0.2.0 the user's selection lives on the selector entry's volatile config and
+ * never reaches this composition's own runtime entry, so the generator has to
+ * state it in the pruner's config for the selection to have any effect.
  */
 function canonicalCompressionRows(
   modules: CompressionModulePaths,
   thresholdPercent?: number,
+  profile?: string,
 ): EntryOptions[] {
   return [
     {
@@ -350,6 +376,7 @@ function canonicalCompressionRows(
           config: {
             headChars: 4096,
             tailChars: 1024,
+            ...(profile === undefined ? {} : { profile }),
             ...(thresholdPercent === undefined ? {} : { autoCompactThresholdPercent: thresholdPercent }),
           },
         },
