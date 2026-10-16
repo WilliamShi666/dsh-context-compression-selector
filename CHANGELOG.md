@@ -2,6 +2,14 @@
 
 All notable changes use this file. The project follows semantic versioning after `0.1.0`.
 
+## 0.2.1 - 2026-10-16
+
+Fixes a crash in the 0.2.0 settings section that shipped in 0.2.0. The runtime is unchanged; both packages move together because the selector pins the runtime to its own version.
+
+### Fixed
+
+- The context-compression settings section crashed on Harness 0.2.0 with `slot entry crashed in 'settings.section'` / React error #185 (`Maximum update depth exceeded`), leaving the panel blank while its navigation entry still appeared. The 0.2.0 adapter composes a UI-facing settings document from the entry's volatile projection, and it built a fresh object on every `getSnapshot()` read. `useSyncExternalStore` compares consecutive snapshots by reference and re-renders until they stop differing, so a snapshot that is never reference-equal to itself never settles: React aborted the tree instead of drawing it, and the section rendered as an empty panel rather than an error. The composed document is now memoized against the form's own snapshot reference, so it is rebuilt only when the projection actually changes. The invariant is now documented on the `SettingsFace` interface, and a regression test pins both halves — the adapter's reference stability and the component mounting through the same `useSyncExternalStore` path the slot framework uses. Reverting the memoization reproduces `Maximum update depth exceeded` exactly, so the test fails on the bug rather than around it.
+
 ## 0.2.0 - 2026-10-16
 
 The same build now mounts on both Harness generations. Every `@deepseek-ai/dsh-*` peer widens from a 0.1.x-only range to the dual-target range `^0.1.1-rc.2 || ^0.2.0-rc.1`, and the two settings surfaces are acquired by capability rather than by version. No DeepSeek Harness core code is modified, and the `dsh web` launch command is unchanged: the Harness resolves an in-box bundle from the running installation first, so a profile-local copy never shadows it.

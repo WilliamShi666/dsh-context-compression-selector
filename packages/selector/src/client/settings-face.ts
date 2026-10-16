@@ -58,6 +58,13 @@ export interface SettingsSnapshot<T> {
  * exactly `HostObservable<SettingsSnapshot<T>>` plus the write path, so the
  * slot framework's `hooks` compartment binds it to a `useCompression` selector
  * hook without any framework-specific type.
+ *
+ * `getSnapshot` MUST be idempotent between changes: it is read by
+ * `useSyncExternalStore`, which compares consecutive snapshots **by reference**
+ * and re-renders until they stop differing. An implementation that composes a
+ * fresh object on every read therefore loops forever rather than rendering
+ * once. Generations whose native snapshot is already stable can return it
+ * directly; any adapter that derives a new shape has to memoize it.
  */
 export interface SettingsFace<T> {
   /** @returns the current sync snapshot (stable reference until the next change). */
@@ -220,14 +227,22 @@ export function toVolatileWrite(field: string, value: unknown): { field: string,
 export function settingsFaceFromConfigForm(
   form: ConfigFormFace<VolatileProjection>,
 ): SettingsFace<ContextCompressionSettings> {
+  // The composed document must be memoized against the form's own snapshot:
+  // `getSnapshot` is read by `useSyncExternalStore`, which compares snapshots by
+  // reference and re-renders forever if each read returns a fresh object. The
+  // form's snapshot reference is the cache key, so a new document is composed
+  // only when the projection actually changed.
+  let cachedFrom: SettingsSnapshot<VolatileProjection> | undefined
+  let cached: SettingsSnapshot<ContextCompressionSettings> | undefined
   return {
     getSnapshot: () => {
       const snapshot = form.getSnapshot()
+      if (cached !== undefined && cachedFrom === snapshot) return cached
       const value = decodeVolatileProjection(snapshot.value)
       // A `ready` snapshot whose projection is unusable must not keep serving
       // the previously accepted document.
       const usable = snapshot.status !== 'ready' || value !== undefined
-      return {
+      const composed: SettingsSnapshot<ContextCompressionSettings> = {
         status: usable ? snapshot.status : 'unavailable',
         value: usable ? value : undefined,
         base: snapshot.base,
@@ -236,6 +251,9 @@ export function settingsFaceFromConfigForm(
         writable: snapshot.writable,
         mode: snapshot.mode,
       }
+      cachedFrom = snapshot
+      cached = composed
+      return composed
     },
     subscribe: listener => form.subscribe(listener),
     set: async (field, value) => {
