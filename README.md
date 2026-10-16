@@ -5,11 +5,12 @@
 [中文说明](README.zh.md) · [Interactive courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [Report an issue](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!NOTE]
-> **What's new in 0.1.1:**
+> **What's new in 0.2.0:**
 >
-> - **DeepSeek-V4.1-Flash is now supported on the Harness default route.** `deepseek-flash` resolves an exact bundled tokenizer (`deepseek-ai/DeepSeek-V4.1-Flash`) instead of failing closed, so exact-gated compression is no longer a no-op on the default model. `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are served by the same V4.1-Flash artifact.
-> - Vision image-token arithmetic is re-ported to the official V4.1 image processor: the per-image cap moves 384 → 1024, the minimum-pixel floor 147456 → 295936, and the aspect clamp is gone.
-> - `deepseek-flash` gains official pricing rows, and the two retired aliases are repriced at the Flash price. `deepseek-v4-pro` is unchanged.
+> - **The same build now runs on DeepSeek Harness 0.2.x as well as 0.1.x.** Every `@deepseek-ai/dsh-*` peer widens to `^0.1.1-rc.2 || ^0.2.0-rc.1`, and the selector picks its settings surface by capability instead of by version, so one published artifact mounts on either generation. No Harness core code is modified, and the `dsh web` launch command is unchanged.
+> - **Web boot no longer aborts on 0.2.0.** The selector used to declare a 0.1.x-only settings service as a static dependency; 0.2.0 does not provide it, which left the plugin entry pending and aborted the whole page. Each settings surface is now acquired in its own sub-fiber.
+> - **Live settings editing on 0.2.0**, through the entry's volatile config fields. The versioned Custom policy is not editable on 0.2.0, where the settings form serves only those fields, so the UI withholds the Custom editor there instead of offering an edit that would be dropped. Explicitly selecting Custom still works.
+> - On 0.2.0 the selected profile now reaches the generated composition, which it previously did not.
 >
 > See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
@@ -117,10 +118,22 @@ Perfect adaptive behavior requires DeepSeek to expose cache-breakpoint control a
 
 ## Compatibility
 
-- Verified against DeepSeek Harness `dsh-v0.1.1-rc.2` using public plugin and profile APIs only.
+- Verified against DeepSeek Harness `dsh-v0.1.1-rc.2` and `dsh-v0.2.0-rc.2` using public plugin and profile APIs only.
 - Requires Node `^22.19.0 || >=24`.
 - The project contains only this Bundle and its runtime; it does not vendor or modify DeepSeek Harness core.
 - This is an unofficial community project and is not affiliated with or endorsed by DeepSeek.
+
+### Per-generation behavior
+
+| Capability | Harness 0.1.x | Harness 0.2.x |
+| --- | --- | --- |
+| Settings surface | plugin namespace via `settingsScope` | the entry's own config form via `configForms` |
+| Whole settings document | readable and writable | not available; per-entry form only |
+| Profile / Auto Compact threshold | stored in the shared document | volatile config fields on the entry |
+| Custom policy (versioned, v3) | editable and selectable | selectable, not editable |
+| Selected profile reaches the generated composition | yes (shared document) | yes (written into the pruner config) |
+
+Selecting `custom` remains available on 0.2.x, but its parameters cannot be edited from the settings page there, because the 0.2.x settings form serves only the entry's Host-declared volatile fields. The UI withholds the Custom editor rather than accepting edits that would be silently dropped.
 
 ## Development and security
 
@@ -138,7 +151,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development expectations, [SECURITY.m
 
 ## Install
 
-The newest package release is `0.1.1` on the `latest` channel. Install the single Bundle entry package into a Harness profile:
+The newest package release is `0.2.0` on the `latest` channel. Install the single Bundle entry package into a Harness profile:
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@latest
@@ -158,4 +171,4 @@ dsh plugin --profile web remove dsh-context-compression-selector
 
 Existing beta users can move to this stable release with the same `up ...@latest` command.
 
-The beta channel is compatible with the established `0.1.1-rc.2` Harness peer range and the official `dsh-v0.1.2-alpha.5` release. The plugin uses only public Harness extension APIs and does not modify Harness core code.
+One published artifact serves both Harness generations; there is no separate 0.1.x or 0.2.x package to choose between. Every `@deepseek-ai/dsh-*` peer declares `^0.1.1-rc.2 || ^0.2.0-rc.1`, covering the 0.1 line (`dsh-v0.1.1-rc.2`, `dsh-v0.1.2-alpha.5`) and the 0.2 line including its prereleases. The plugin uses only public Harness extension APIs and does not modify Harness core code.

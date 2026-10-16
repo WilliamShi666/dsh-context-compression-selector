@@ -2,6 +2,32 @@
 
 All notable changes use this file. The project follows semantic versioning after `0.1.0`.
 
+## 0.2.0 - 2026-10-16
+
+The same build now mounts on both Harness generations. Every `@deepseek-ai/dsh-*` peer widens from a 0.1.x-only range to the dual-target range `^0.1.1-rc.2 || ^0.2.0-rc.1`, and the two settings surfaces are acquired by capability rather than by version. No DeepSeek Harness core code is modified, and the `dsh web` launch command is unchanged: the Harness resolves an in-box bundle from the running installation first, so a profile-local copy never shadows it.
+
+### Added
+
+- Harness 0.2.0 support alongside the existing 0.1.x target. Both generations mount the same published artifact: the client acquires its settings surface through a per-generation `ctx.inject` and programs against one internal `SettingsFace` adapter, so the selector renders on either without a generation switch at build time.
+- Live settings editing on Harness 0.2.0. The entry `Config` gains `profile` and `autoCompactThresholdPercent`, both declared volatile, so the Host exposes them in this entry's configuration form and a change takes effect without remounting the plugin. `readLiveConfigField` reads a volatile field as a plain value through the global `Symbol.for('cosmokit.volatile.write')` protocol — the symbol rather than a `get` probe, so an ordinary object exposing `get` passes through untouched, and no dependency on the Host's own `cosmokit` copy is introduced.
+- `Config` declares the `volatile` key on this package's schemastery floor (3.18.1), whose `Meta` predates it. The declaration matches the Host's own 3.18.4 key, so the two agree rather than diverge, and being type-level only it adds no runtime dependency. The fields use `.extra('volatile', true)` rather than `.volatile()` because 3.18.1's `Schema` has no such method; `meta.volatile` round-trips through `toJSON()` on both versions.
+
+### Changed
+
+- The selector's settings acquisition on Harness 0.2.0 reads the entry's configuration form (`ctx.configForms` / `whileServed` / `get`) and writes through it. That form serves only the entry's Host-declared volatile fields, so the versioned Custom policy is not editable there and the surface does not offer it: the injected face carries `customEditable`, and on 0.2.0 the Custom editor and the Custom hint are withheld rather than shown and silently dropped. The explicit Custom *selection* on 0.2.0 is unaffected and still resolves.
+- The selected profile now reaches the generated composition. On 0.1.x the profile lives in the shared `context-compression` document that the generated composition's runtime entry reads live; 0.2.0 has no shared document, so a selection made on the selector entry never crossed into the composition's own runtime entry and had no effect. `PresetOverlayOptions.profile` carries it into the pruner's config instead. The profile also joins the generated file's content identity, so switching profiles produces a new file rather than reusing one bound to the previous selection.
+- The current Session's agent preset is read structurally (`session-preset.ts`) across both generations: 0.1.x keeps `agentPreset` on each list row and names the current Session in `current`, while 0.2.0 moved the preset to the `agentPreset` Session projection and marks the current Session by the main view's `retainedBy.mainView` retention. A Session whose preset is not yet known still reads `undefined`, which callers treat as "do not block".
+- The Auto Compact threshold resolves through the same capability split, and the 80% fallback constant is now named (`DEFAULT_AUTO_COMPACT_THRESHOLD_PERCENT`) rather than written inline.
+- The disclosure chevron is resolved across generations at runtime: 0.1.x exports `IconChevronDownOutline14`, 0.2.0 renamed the artwork to `IconChevronDownOutlineRegular`. Neither name exists on the other generation, so the lookup is a namespace read and a future rename degrades to a missing glyph instead of a failed component.
+- The client entry's static service list drops `settingsScope`. The composition-level `dsh.client.inject` manifest field is unchanged.
+
+### Fixed
+
+- Web boot aborted with `1 entry did not activate` on Harness 0.2.0. The client declared `settingsScope` as a static dependency, but 0.2.0 provides no such service, so the entry's fiber stayed `pending` forever while the boot gate reads exactly that fiber. Each settings surface is now acquired in its own `ctx.inject` sub-fiber, where a missing service leaves only the sub-fiber pending and the entry still reaches `active`.
+- The runtime no longer throws on Harness 0.2.0. Its settings read called `settings.get(namespace)`, and 0.2.0's `settings` service has no `get` at all — the call raised a `TypeError` rather than merely failing to find a document, which took down the mount. Both settings reads are now capability-guarded and return `undefined` on a generation that has no such surface, which the existing fallback path already handles.
+- The 0.1.x settings registration lease is skipped on 0.2.0, whose settings service has no `register`; the lease previously assumed the 0.1.x namespace surface.
+- The compact sidebar no longer renders the full Custom parameter editor. The gate on the sidebar's custom-editor branch was inverted, and the editor's `disabled` state was computed from the wrong predicate; both are corrected against the surface axis (`showCustomEditor`) and the generation axis (`customEditable`) separately.
+
 ## 0.1.1 - 2026-09-23
 
 ### Added

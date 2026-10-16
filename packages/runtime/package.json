@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-compression-selector-runtime",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Auditable context-compression runtime for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",

@@ -5,11 +5,12 @@
 [English README](README.md) · [English courseware](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#english) · [中文课件](https://github.com/WilliamShi666/Slides-that-explain-dsh-context-compression-selector#中文) · [提交问题](https://github.com/WilliamShi666/dsh-context-compression-selector/issues)
 
 > [!NOTE]
-> **0.1.1 更新内容：**
+> **0.2.0 更新内容：**
 >
-> - **现已支持 DeepSeek-V4.1-Flash，并覆盖 Harness 默认路由。** 默认路由 `deepseek-flash` 现在可解析出随包提供的精确 tokenizer（`deepseek-ai/DeepSeek-V4.1-Flash`），不再安全降级为空转，因此默认模型上的精确门槛压缩不再失效。`deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 由同一份 V4.1-Flash 资产提供服务。
-> - 视觉图片 token 算术已按官方 V4.1 image processor 重移植：每张图片上限 384 → 1024、最小像素 147456 → 295936，且取消了宽高比裁剪。
-> - `deepseek-flash` 补齐官方价格行，两个已退役别名改按 Flash 价格计费；`deepseek-v4-pro` 保持不变。
+> - **同一份构建现在可同时运行在 DeepSeek Harness 0.2.x 与 0.1.x 上。** 所有 `@deepseek-ai/dsh-*` peer 范围放宽为 `^0.1.1-rc.2 || ^0.2.0-rc.1`，选择器按能力而非按版本挑选设置界面，因此同一个已发布产物可挂载到任一代 Harness。不修改 Harness 核心代码，`dsh web` 启动命令也无需改动。
+> - **0.2.0 上 web 启动不再中断。** 选择器此前把一个仅 0.1.x 提供的设置服务声明为静态依赖，0.2.0 不提供该服务，导致插件入口一直处于 pending 并中断整个页面。现在每个设置界面各自在自己的子 fiber 中获取。
+> - **0.2.0 支持实时设置编辑**，经由入口的 volatile 配置字段。带版本的 Custom 策略在 0.2.0 上不可编辑（该代设置表单只服务于这些字段），因此界面在 0.2.0 上不再显示 Custom 编辑器，而不是提供一个会被静默丢弃的编辑入口。显式选择 Custom 仍然可用。
+> - 在 0.2.0 上，所选档位现在能传递到生成的 composition（此前不能）。
 >
 > 完整发布历史见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -117,10 +118,22 @@ Adaptive 在设置界面中显示为**保守成本**。它目前有意不是一�
 
 ## 兼容性
 
-- 已基于 DeepSeek Harness `dsh-v0.1.1-rc.2` 验证，并且只使用公开的插件与 Profile API。
+- 已基于 DeepSeek Harness `dsh-v0.1.1-rc.2` 与 `dsh-v0.2.0-rc.2` 验证，并且只使用公开的插件与 Profile API。
 - 需要 Node `^22.19.0 || >=24`。
 - 本项目只包含该 Bundle 与 runtime，不 vendoring 或修改 DeepSeek Harness 核心。
 - 这是非官方社区项目，与 DeepSeek 不存在隶属或背书关系。
+
+### 两代 Harness 的行为差异
+
+| 能力 | Harness 0.1.x | Harness 0.2.x |
+| --- | --- | --- |
+| 设置界面 | 经 `settingsScope` 的插件命名空间 | 经 `configForms` 的入口自身配置表单 |
+| 整份设置文档 | 可读可写 | 不可用，只有按入口的表单 |
+| 档位 / Auto Compact 阈值 | 存于共享文档 | 入口上的 volatile 配置字段 |
+| Custom 策略（带版本，v3） | 可编辑且可选 | 可选，不可编辑 |
+| 所选档位传递到生成的 composition | 是（共享文档） | 是（写入 pruner 配置） |
+
+在 0.2.x 上仍可把档位选为 `custom`，但其参数无法在该代的设置页编辑，因为 0.2.x 的设置表单只服务于入口由 Host 声明的 volatile 字段。界面在 0.2.x 上不显示 Custom 编辑器，而不是接受会被静默丢弃的编辑。
 
 ## 开发与安全
 
@@ -138,7 +151,7 @@ pnpm run verify:release
 
 ## 安装
 
-最新包版本是 `latest` 通道上的 `0.1.1`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
+最新包版本是 `latest` 通道上的 `0.2.0`。将唯一的 Bundle 入口包安装到某个 Harness Profile：
 
 ```sh
 dsh plugin --profile web add dsh-context-compression-selector@latest
@@ -158,4 +171,4 @@ dsh plugin --profile web remove dsh-context-compression-selector
 
 已安装 beta 的用户可使用同一条 `up ...@latest` 命令升级到这个稳定版。
 
-beta 通道兼容既有的 `0.1.1-rc.2` Harness peer 范围，以及官方 `dsh-v0.1.2-alpha.5` 版本。插件只使用 Harness 的公开扩展 API，不会修改 Harness 核心代码。
+同一份已发布产物同时服务两代 Harness，不存在需要二选一的 0.1.x 与 0.2.x 包。所有 `@deepseek-ai/dsh-*` peer 均声明 `^0.1.1-rc.2 || ^0.2.0-rc.1`，覆盖 0.1 线（`dsh-v0.1.1-rc.2`、`dsh-v0.1.2-alpha.5`）以及 0.2 线（含其预发布版本）。插件只使用 Harness 的公开扩展 API，不会修改 Harness 核心代码。
